@@ -1,0 +1,199 @@
+package bot
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
+	"undercast-bot/auth"
+	"undercast-bot/bot/ui/multiselect"
+	"undercast-bot/bot/ui/treemultiselect"
+	"undercast-bot/mediary"
+)
+
+func NewUndercastBot(token string, auth *auth.Service, mediary *mediary.Service) *UndercastBot {
+	return &UndercastBot{
+		token:   token,
+		auth:    auth,
+		mediary: mediary,
+	}
+}
+
+type UndercastBot struct {
+	token   string
+	bot     *bot.Bot
+	auth    *auth.Service
+	mediary *mediary.Service
+}
+
+func (ub *UndercastBot) Start(ctx context.Context) {
+	opts := []bot.Option{
+		bot.WithDefaultHandler(ub.urlHandler),
+		bot.WithMiddlewares(ub.authenticate, ub.setMenuMiddleware),
+	}
+
+	ub.bot = bot.New(ub.token, opts...)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, ub.helpHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, ub.helpHandler)
+	ub.bot.Start(ctx)
+}
+
+type Metadata struct {
+	Name  string         `json:"name"`
+	Files []FileMetadata `json:"files"`
+}
+
+type FileMetadata struct {
+	Path     string `json:"path"`
+	LenBytes int64  `json:"length_bytes"`
+}
+
+func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	if update == nil || update.Message == nil {
+		return
+	}
+	url := update.Message.Text
+	isValid, err := ub.mediary.IsValidURL(ctx, url)
+	if err != nil {
+		ub.respondError(ctx, update.Message.Chat.ID)
+		return
+	}
+	if !isValid {
+		ub.sendTextMessage(ctx, update.Message.Chat.ID, "Invalid URL")
+		return
+	}
+
+	cancelChan := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-cancelChan:
+			return
+		case <-time.After(2 * time.Second):
+			ub.sendTextMessage(ctx, update.Message.Chat.ID, "Fetching metadata, please wait...")
+		}
+	}()
+	//close(cancelChan) // FIXME
+
+	metadata, err := ub.mediary.FetchMetadata(ctx, url)
+	close(cancelChan)
+	if err != nil {
+		ub.respondError(ctx, update.Message.Chat.ID)
+		return
+	}
+
+	var items []*multiselect.Item
+	for _, file := range metadata.Files {
+		items = append(items, &multiselect.Item{
+			Text: file.Path,
+		})
+	}
+
+	kb := treemultiselect.New(
+		ub.bot,
+		items,
+		ub.onConfirmSelection,
+		treemultiselect.WithMaxItemsPerPage(10),
+		treemultiselect.WithDynamicActionButtons(func(selectedItems []*treemultiselect.Item) []treemultiselect.ActionButton {
+			switch len(selectedItems) {
+			case 0:
+				return []treemultiselect.ActionButton{
+					treemultiselect.NewCancelButton("Cancel", func(ctx context.Context, bot *bot.Bot, mes *models.Message) {
+
+					}),
+				}
+			case 1:
+				return []treemultiselect.ActionButton{
+					treemultiselect.NewConfirmButton(
+						"Create Episode",
+						func(ctx context.Context, bot *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+
+						}),
+					treemultiselect.NewCancelButton("Cancel", func(ctx context.Context, bot *bot.Bot, mes *models.Message) {
+
+					}),
+				}
+			default:
+				return []treemultiselect.ActionButton{
+					treemultiselect.NewConfirmButton(
+						"1 File - 1 Episode",
+						func(ctx context.Context, bot *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+
+						}),
+					treemultiselect.NewConfirmButton(
+						fmt.Sprintf("%d Files - 1 Episode", len(selectedItems)),
+						func(ctx context.Context, bot *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+
+						}),
+					treemultiselect.NewCancelButton("Cancel", func(ctx context.Context, bot *bot.Bot, mes *models.Message) {
+
+					}),
+				}
+			}
+		}),
+	)
+
+	msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      update.Message.Chat.ID,
+		Text:        fmt.Sprintf("Please choose which files to include in the episode"),
+		ReplyMarkup: kb,
+	})
+
+	//	filepaths := make([]string, 0, len(metadata.Files))
+	//	for _, item := range metadata.Files {
+	//		filepaths = append(filepaths, item.Path)
+	//	}
+	//
+	//	msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+	//		ChatID: update.Message.Chat.ID,
+	//		Text: fmt.Sprintf(`%s
+	//
+	//contains the following files:
+	//
+	//%s
+	//
+	//Please choose which files you would like to include in an episode of your podcast. To make a choice, reply to this message with a list of files`, url, strings.Join(filepaths, "\n")),
+	//	})
+
+	log.Printf("urlHandler: msg: %v, err: %v\n", msg, err)
+}
+
+func (ub *UndercastBot) onConfirmSelection(ctx context.Context, bot *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+	log.Printf("onConfirmSelection: items: %v+\n", items)
+}
+
+//func (ub *UndercastBot) onInlineKeyboardSelect(ctx context.Context, _ *bot.Bot, mes *models.Message, data []byte) {
+//	log.Printf("onInlineKeyboardSelect: %s", data)
+//	_, err := ub.bot.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
+//		ChatID:    mes.Chat.ID,
+//		MessageID: mes.ID,
+//		ReplyMarkup: inline.New(ub.bot).
+//			Row().
+//			Button("Row 1, Btn 1", []byte("1-1"), ub.onInlineKeyboardSelect).
+//			Button("Row 1, Btn 2", []byte("1-2"), ub.onInlineKeyboardSelect).
+//			Row().
+//			Button("Row 2, Btn 1", []byte("2-1"), ub.onInlineKeyboardSelect).
+//			Button("Row 2, Btn 2", []byte("2-2"), ub.onInlineKeyboardSelect).
+//			Button("Row 2, Btn 3", []byte("2-3"), ub.onInlineKeyboardSelect),
+//	})
+//	if err != nil {
+//		log.Printf("onInlineKeyboardSelect err: %v", err)
+//	}
+//}
+
+func (ub *UndercastBot) respondError(ctx context.Context, chatID int) {
+	ub.sendTextMessage(ctx, chatID, "Service Temporarily Unavailable")
+}
+
+func (ub *UndercastBot) sendTextMessage(ctx context.Context, chatID int, message string, args ...interface{}) {
+	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   fmt.Sprintf(message, args...),
+	}); err != nil {
+		log.Printf("sendTextMessage err: %v\n", err)
+	}
+}
