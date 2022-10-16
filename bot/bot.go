@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -86,20 +88,48 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 		return
 	}
 
-	var items []*multiselect.Item
+	var paths []string
 	for _, file := range metadata.Files {
-		items = append(items, &multiselect.Item{
-			Text: file.Path,
-		})
+		paths = append(paths, file.Path)
 	}
 
 	kb := treemultiselect.New(
 		ub.bot,
-		items,
-		ub.onConfirmSelection,
-		treemultiselect.WithMaxItemsPerPage(10),
-		treemultiselect.WithDynamicActionButtons(func(selectedItems []*treemultiselect.Item) []treemultiselect.ActionButton {
-			switch len(selectedItems) {
+		paths,
+		nil, // onConfirmSelection is not needed if WithDynamicActionButtons is set
+		treemultiselect.WithMaxNodesPerPage(10),
+		treemultiselect.WithDynamicFilterButtons(func(selectedNodes []*treemultiselect.TreeNode) []treemultiselect.FilterButton {
+			extCounter := make(map[string]int)
+			for _, n := range selectedNodes {
+				extCounter[filepath.Ext(n.Value)]++
+			}
+			delete(extCounter, "") // no-extension files
+
+			topExt := ""
+			topExtCount := 0
+			for ext, count := range extCounter {
+				if count > topExtCount {
+					topExt = ext
+					topExtCount = count
+				}
+			}
+
+			if topExt != "" {
+				return []treemultiselect.FilterButton{
+					{
+						Text: "Select *" + topExt,
+						Fn: func(node *treemultiselect.TreeNode) bool {
+							return strings.HasSuffix(node.Value, topExt)
+						},
+					},
+					treemultiselect.FilterButtonSelectNone,
+				}
+			}
+
+			return []treemultiselect.FilterButton{}
+		}),
+		treemultiselect.WithDynamicActionButtons(func(selectedNodes []*treemultiselect.TreeNode) []treemultiselect.ActionButton {
+			switch len(selectedNodes) {
 			case 0:
 				return []treemultiselect.ActionButton{
 					treemultiselect.NewCancelButton("Cancel", func(ctx context.Context, bot *bot.Bot, mes *models.Message) {
@@ -110,7 +140,7 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 				return []treemultiselect.ActionButton{
 					treemultiselect.NewConfirmButton(
 						"Create Episode",
-						func(ctx context.Context, bot *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 
 						}),
 					treemultiselect.NewCancelButton("Cancel", func(ctx context.Context, bot *bot.Bot, mes *models.Message) {
@@ -121,12 +151,12 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 				return []treemultiselect.ActionButton{
 					treemultiselect.NewConfirmButton(
 						"1 File - 1 Episode",
-						func(ctx context.Context, bot *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 
 						}),
 					treemultiselect.NewConfirmButton(
-						fmt.Sprintf("%d Files - 1 Episode", len(selectedItems)),
-						func(ctx context.Context, bot *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+						fmt.Sprintf("%d Files - 1 Episode", len(selectedNodes)),
+						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 
 						}),
 					treemultiselect.NewCancelButton("Cancel", func(ctx context.Context, bot *bot.Bot, mes *models.Message) {
@@ -136,28 +166,11 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 			}
 		}),
 	)
-
 	msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      update.Message.Chat.ID,
 		Text:        fmt.Sprintf("Please choose which files to include in the episode"),
 		ReplyMarkup: kb,
 	})
-
-	//	filepaths := make([]string, 0, len(metadata.Files))
-	//	for _, item := range metadata.Files {
-	//		filepaths = append(filepaths, item.Path)
-	//	}
-	//
-	//	msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
-	//		ChatID: update.Message.Chat.ID,
-	//		Text: fmt.Sprintf(`%s
-	//
-	//contains the following files:
-	//
-	//%s
-	//
-	//Please choose which files you would like to include in an episode of your podcast. To make a choice, reply to this message with a list of files`, url, strings.Join(filepaths, "\n")),
-	//	})
 
 	log.Printf("urlHandler: msg: %v, err: %v\n", msg, err)
 }
