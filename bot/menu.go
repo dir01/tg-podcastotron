@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -32,7 +33,11 @@ func (ub *UndercastBot) setMenuMiddleware(next bot.HandlerFunc) bot.HandlerFunc 
 			})
 		}
 
-		cacheKey := fmt.Sprintf("%s-%d", username, isAdmin)
+		params := url.Values{}
+		params.Add("username", username)
+		params.Add("isAdmin", fmt.Sprintf("%t", isAdmin))
+		cacheKey := params.Encode()
+
 		if !sentMenusCache[cacheKey] {
 			if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands}); err != nil {
 				log.Printf("setMenuMiddleware err: %v\n", err)

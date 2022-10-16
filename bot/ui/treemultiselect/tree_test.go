@@ -31,7 +31,7 @@ func TestItemTree(t *testing.T) {
 			t.Errorf("root.foo.bar should have 3 children, got %d", len(root.Children["foo"].Children["bar"].Children))
 		}
 
-		if len(nodesMap) != 13 {
+		if len(nodesMap) != 12 {
 			t.Errorf("nodesMap should have 13 elements, got %d", len(nodesMap))
 		}
 	})
