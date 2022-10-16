@@ -1,0 +1,16 @@
+name: On push to master
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    name: Run tests
+    uses: ./.github/workflows/do_run_tests.yml
+  image:
+    name: Create and publish a Docker image
+    needs: test
+    uses: ./.github/workflows/do_build_image.yml
+    secrets:
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

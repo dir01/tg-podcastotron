@@ -3,3 +3,6 @@ build:
 
 run:
 	go run ./cmd/bot
+
+test:
+	go test -v ./...
