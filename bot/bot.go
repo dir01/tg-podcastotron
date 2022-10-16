@@ -179,25 +179,6 @@ func (ub *UndercastBot) onConfirmSelection(ctx context.Context, bot *bot.Bot, me
 	log.Printf("onConfirmSelection: items: %v+\n", items)
 }
 
-//func (ub *UndercastBot) onInlineKeyboardSelect(ctx context.Context, _ *bot.Bot, mes *models.Message, data []byte) {
-//	log.Printf("onInlineKeyboardSelect: %s", data)
-//	_, err := ub.bot.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
-//		ChatID:    mes.Chat.ID,
-//		MessageID: mes.ID,
-//		ReplyMarkup: inline.New(ub.bot).
-//			Row().
-//			Button("Row 1, Btn 1", []byte("1-1"), ub.onInlineKeyboardSelect).
-//			Button("Row 1, Btn 2", []byte("1-2"), ub.onInlineKeyboardSelect).
-//			Row().
-//			Button("Row 2, Btn 1", []byte("2-1"), ub.onInlineKeyboardSelect).
-//			Button("Row 2, Btn 2", []byte("2-2"), ub.onInlineKeyboardSelect).
-//			Button("Row 2, Btn 3", []byte("2-3"), ub.onInlineKeyboardSelect),
-//	})
-//	if err != nil {
-//		log.Printf("onInlineKeyboardSelect err: %v", err)
-//	}
-//}
-
 func (ub *UndercastBot) respondError(ctx context.Context, chatID int) {
 	ub.sendTextMessage(ctx, chatID, "Service Temporarily Unavailable")
 }

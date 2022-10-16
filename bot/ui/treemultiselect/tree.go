@@ -35,7 +35,9 @@ func (tms *TreeMultiSelect) initializeTree(paths []string) {
 					Value:    keys[0],
 					Text:     keys[0],
 				}
-				newNode.Text = tms.formatNode(newNode)
+				if tms.formatNode != nil {
+					newNode.Text = tms.formatNode(newNode)
+				}
 				curr.Children[keys[0]] = newNode
 				tms.nodeMap[id] = newNode
 				curr = newNode
