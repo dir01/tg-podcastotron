@@ -1,80 +1,51 @@
 package treemultiselect
 
 import (
-	"fmt"
 	"strings"
 )
 
-func createTree(items []*Item, separator string) (root *node, nodesMap map[string]*node) {
-	nodesMap = make(map[string]*node)
+func (tms *TreeMultiSelect) initializeTree(paths []string) {
 
 	_counter := 0
-	nextID := func() string {
+	nextID := func() int {
 		_counter++
-		return fmt.Sprintf("t-%d", _counter) // t- prefix to avoid collisions with user-provided IDs
+		return _counter
 	}
 
-	rootID := nextID()
-	root = &node{
-		Parent:   nil,
-		Children: make(map[string]*node),
-		Item:     &Item{ID: rootID},
+	tms.root = &TreeNode{
+		Children: make(map[string]*TreeNode),
 	}
-	nodesMap[rootID] = root
+	tms.currentNode = tms.root
+	tms.nodeMap = make(map[int]*TreeNode)
 
-	for _, item := range items {
-		item := item
-		curr := root
+	for _, pth := range paths {
+		pth := pth
+		curr := tms.root
 		for {
-			keys := strings.SplitN(item.Text, separator, 2)
-			if len(keys) == 1 {
-				item.Text = keys[0]
-				newNode := &node{
-					Parent:   curr,
-					Children: make(map[string]*node),
-					Item:     item,
-				}
-				curr.Children[item.Text] = newNode
-				nodesMap[item.ID] = curr.Children[item.Text]
-				break
-			} else if len(keys) == 2 {
-				newItem := &Item{Text: fmt.Sprintf("📁 %s", keys[0]), ID: nextID()}
-				if existingNode, ok := curr.Children[newItem.Text]; !ok {
-					newNode := &node{
-						Parent:   curr,
-						Children: make(map[string]*node),
-						Item:     newItem,
-					}
-					curr.Children[newItem.Text] = newNode
-					nodesMap[newItem.ID] = newNode
-					curr = newNode
-				} else {
-					curr = existingNode
-				}
-				item.Text = keys[1]
+			keys := strings.SplitN(pth, tms.separator, 2)
+
+			if existingNode, ok := curr.Children[keys[0]]; ok {
+				curr = existingNode
 			} else {
-				panic("invalid item")
+				id := nextID()
+				newNode := &TreeNode{
+					Parent:   curr,
+					Children: make(map[string]*TreeNode),
+					ID:       id,
+					Value:    keys[0],
+					Text:     keys[0],
+				}
+				newNode.Text = tms.formatNode(newNode)
+				curr.Children[keys[0]] = newNode
+				tms.nodeMap[id] = newNode
+				curr = newNode
+			}
+
+			if len(keys) > 1 {
+				pth = keys[1]
+			} else {
+				break
 			}
 		}
 	}
-
-	return root, nodesMap
-}
-
-type node struct {
-	Parent   *node
-	Children map[string]*node
-	Item     *Item
-}
-
-func (n *node) isRoot() bool {
-	return n.Parent == nil
-}
-
-func (n *node) isBranch() bool {
-	return len(n.Children) > 0
-}
-
-func (n *node) isLeaf() bool {
-	return len(n.Children) == 0
 }
