@@ -16,7 +16,9 @@ func (tms *TreeMultiSelect) initializeTree(paths []string) {
 		Children: make(map[string]*TreeNode),
 	}
 	tms.currentNode = tms.root
-	tms.nodeMap = make(map[int]*TreeNode)
+	tms.nodeMap = map[int]*TreeNode{
+		tms.root.ID: tms.root,
+	}
 
 	for _, pth := range paths {
 		pth := pth

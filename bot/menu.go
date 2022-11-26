@@ -3,20 +3,20 @@ package bot
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"go.uber.org/zap"
 )
 
-var sentMenusCache = make(map[string]bool) // TODO: cache invalidataion
+var sentMenusCache = make(map[string]bool) // TODO: cache invalidatation
 
 func (ub *UndercastBot) setMenuMiddleware(next bot.HandlerFunc) bot.HandlerFunc {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		commands := []models.BotCommand{
-			{"foo", "Say foo"},
-			{"bar", "Say bar"},
+			{"episodes", "List all your episodes"},
+			{"feeds", "List all your feeds"},
 		}
 
 		username := ub.extractUsername(update)
@@ -40,7 +40,7 @@ func (ub *UndercastBot) setMenuMiddleware(next bot.HandlerFunc) bot.HandlerFunc 
 
 		if !sentMenusCache[cacheKey] {
 			if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands}); err != nil {
-				log.Printf("setMenuMiddleware err: %v\n", err)
+				ub.logger.Error("setMenuMiddleware error", zap.Error(err))
 			}
 			sentMenusCache[cacheKey] = true
 		}

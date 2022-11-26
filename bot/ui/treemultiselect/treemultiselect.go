@@ -117,7 +117,7 @@ func (tms *TreeMultiSelect) prepareResults() []string {
 	nodes := tms.getAllSelectedNodes()
 	var result []string
 	for _, node := range nodes {
-		result = append(result, tms.nodeToPath(node))
+		result = append(result, nodeToPath(node))
 	}
 	return result
 }
@@ -133,17 +133,6 @@ func (tms *TreeMultiSelect) getAllSelectedNodes() []*TreeNode {
 	return nodes
 }
 
-func (tms *TreeMultiSelect) nodeToPath(node *TreeNode) string {
-	var pathParts []string
-	for !node.IsRoot() {
-		pathParts = append(pathParts, node.Value)
-		node = node.Parent
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(pathParts)))
-	fullPath := path.Join(pathParts...)
-	return fullPath
-}
-
 func (tms *TreeMultiSelect) goUp(ctx context.Context, b *bot.Bot, message *models.Message, prevPaginationPosition int) {
 	if tms.currentNode.IsRoot() {
 		tms.onError(fmt.Errorf("can't go up from root node"))
@@ -156,6 +145,19 @@ func (tms *TreeMultiSelect) goUp(ctx context.Context, b *bot.Bot, message *model
 		tms.filterButtons = tms.dynamicFilterButtons(maps.Values(tms.currentNode.Children))
 	}
 	tms.sendUpdatedMarkup(ctx, b, message)
+}
+
+func nodeToPath(node *TreeNode) string {
+	var pathParts []string
+	for !node.IsRoot() {
+		pathParts = append(pathParts, node.Value)
+		node = node.Parent
+	}
+	sort.SliceStable(pathParts, func(i, j int) bool {
+		return i > j
+	})
+	fullPath := path.Join(pathParts...)
+	return fullPath
 }
 
 func defaultOnError(err error) {

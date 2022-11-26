@@ -1,0 +1,32 @@
+@startmindmap
+
+* Episodes
+** Show Status
+*** Is Ready
+*** Individual Stages
+** Add to feed
+*** Mass add to feed
+*** Add to nonexistent feed
+** Remove from feed
+*** Mass remove from feed
+** Rename
+*** Mass rename
+** Delete
+*** Mass delete
+
+* Feeds
+** Add
+** List Episodes
+** Remove Episode
+** Rename
+** Delete
+** Publish
+** Unpublish
+
+* Flows
+** Send URL
+*** Choose Many-to-Many
+**** Show Many episodes as a list
+
+
+@endmindmap
