@@ -55,6 +55,8 @@ func (ub *UndercastBot) Start(ctx context.Context) {
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, ub.helpHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/episodes", bot.MatchTypeExact, ub.episodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/feeds", bot.MatchTypeExact, ub.feedsHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/unpublish_ep", bot.MatchTypePrefix, ub.unpublishEpisodesHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/publish_ep", bot.MatchTypePrefix, ub.publishEpisodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/playground", bot.MatchTypeExact, ub.playgroundHandler)
 	ub.bot.Start(ctx)
 }
@@ -72,7 +74,7 @@ type FileMetadata struct {
 func (ub *UndercastBot) handleError(ctx context.Context, chatID int, err error) {
 	id := uuid.New().String()
 	ub.logger.Error("error", zap.String("id", id), zap.Error(err))
-	ub.sendTextMessage(ctx, chatID, "An error occured while processing your request. Please try again later. \nError ID: %s", id)
+	ub.sendTextMessage(ctx, chatID, "An error occurred while processing your request. Please try again later. \nError ID: %s", id)
 }
 
 func (ub *UndercastBot) sendTextMessage(ctx context.Context, chatID int, message string, args ...interface{}) {

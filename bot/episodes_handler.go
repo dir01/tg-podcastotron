@@ -7,19 +7,26 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
 	"undercast-bot/service"
 )
 
 func (ub *UndercastBot) episodesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	username := ub.extractUsername(update)
-	if username == "" {
+	userID := ub.extractUsername(update)
+	if userID == "" {
 		return
 	}
 
-	episodes, err := ub.service.ListEpisodes(ctx, username)
+	zapFields := []zap.Field{
+		zap.Int("chatID", update.Message.Chat.ID),
+		zap.String("messageText", update.Message.Text),
+		zap.String("userID", userID),
+	}
+
+	episodes, err := ub.service.ListEpisodes(ctx, userID)
 	if err != nil {
-		ub.logger.Error("episodesHandler error", zap.Error(err))
+		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
 		return
 	}
 
@@ -28,24 +35,56 @@ func (ub *UndercastBot) episodesHandler(ctx context.Context, b *bot.Bot, update 
 			ChatID: update.Message.Chat.ID,
 			Text:   "You have no episodes yet",
 		}); err != nil {
-			ub.logger.Error("episodesHandler error", zap.Error(err))
+			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zapFields...))
 		}
 		return
 	}
 
+	feeds, err := ub.service.ListFeeds(ctx, userID)
+	if err != nil {
+		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
+		return
+	}
+
+	feedMap := map[string]*service.Feed{}
+	for _, f := range feeds {
+		feedMap[f.ID] = f
+	}
+
 	for _, ep := range episodes {
-		ub.renderEpisode(ctx, b, update, ep)
+		text := ub.renderEpisode(ep, feedMap)
+		if msg, err := b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:    update.Message.Chat.ID,
+			ParseMode: models.ParseModeHTML,
+			Text:      text,
+		}); err != nil {
+			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zap.Any("message", msg)))
+			return
+		}
 	}
 }
 
-func (ub *UndercastBot) renderEpisode(ctx context.Context, b *bot.Bot, update *models.Update, ep *service.Episode) {
-
-	if msg, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text: fmt.Sprintf(`Episode %s (%s)
-
-Please select `, ep.Title, strings.Join(ep.SourceFilepaths, "\n")),
-	}); err != nil {
-		ub.logger.Error("episodesHandler error", zap.Error(err), zap.Any("msg", msg))
+func (ub *UndercastBot) renderEpisode(ep *service.Episode, feedMap map[string]*service.Feed) string {
+	var feedsDescriptionBits []string
+	for _, f := range ep.FeedIDs {
+		feedsDescriptionBits = append(feedsDescriptionBits, fmt.Sprintf("- %s (%s)", feedMap[f].ID, feedMap[f].Title))
 	}
+	feedsDescription := strings.Join(feedsDescriptionBits, "\n")
+
+	return fmt.Sprintf(`Episode #<code>%s</code> (%s)
+
+<b>Source:</b>
+<code>%s</code>
+
+<b>Files:</b>
+<code>- %s</code>
+
+<b>Published to feeds:</b>
+%s`,
+		ep.ID,
+		ep.Title,
+		ep.SourceURL,
+		strings.Join(ep.SourceFilepaths, "\n- "),
+		feedsDescription,
+	)
 }

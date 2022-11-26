@@ -7,6 +7,5 @@ const (
 type EnqueueEpisodesPayload struct {
 	URL    string
 	Paths  [][]string
-	ChatID int
 	UserID string
 }

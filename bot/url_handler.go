@@ -8,19 +8,25 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
 	"undercast-bot/bot/ui/treemultiselect"
 	"undercast-bot/service"
 )
 
 func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	zapFields := []zap.Field{
+		zap.Int("chatID", update.Message.Chat.ID),
+		zap.String("messageText", update.Message.Text),
+	}
+
 	if update == nil || update.Message == nil {
 		return
 	}
 	url := update.Message.Text
 	isValid, err := ub.service.IsValidURL(ctx, url)
 	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, fmt.Errorf("failed to check if URL is valid: %w", err))
+		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to check if URL is valid", zapFields...))
 		return
 	}
 	if !isValid {
@@ -30,9 +36,11 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 
 	metadata, err := ub.service.FetchMetadata(ctx, url)
 	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, fmt.Errorf("failed to fetch metadata: %w", err))
+		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to fetch metadata", zapFields...))
 		return
 	}
+
+	zapFields = append(zapFields, zap.Any("metadata", metadata))
 
 	var paths []string
 	for _, file := range metadata.Files {
@@ -105,33 +113,51 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 		Text:        fmt.Sprintf("Please choose which files to include in the episode"),
 		ReplyMarkup: kb,
 	}); err != nil {
-		ub.logger.Error("urlHandler error", zap.Error(err), zap.Any("msg", msg))
+		zapFields = append(zapFields, zap.Any("message", msg))
+		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zapFields...))
+		return
 	}
 }
 
 func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, filepaths [][]string, chatID int, userID string) {
-	if err := ub.service.CreateEpisodesAsync(ctx, url, filepaths, userID, chatID); err != nil {
-		ub.handleError(ctx, chatID, fmt.Errorf("failed to enqueue episodes creation: %w", err))
+	if err := ub.service.CreateEpisodesAsync(ctx, url, filepaths, userID); err != nil {
+		ub.handleError(ctx, chatID, zaperr.Wrap(
+			err, "failed to enqueue episodes creation",
+			zap.Int("chatID", chatID),
+			zap.String("userID", userID),
+			zap.String("url", url),
+			zap.Any("filepaths", filepaths),
+		))
 	}
 }
 
 func (ub *UndercastBot) onEpisodesCreated(ctx context.Context, createdEpisodes []*service.Episode) {
 	userID := createdEpisodes[0].UserID // ¯\_(ツ)_/¯
+	zapFields := []zap.Field{
+		zap.String("userID", userID),
+	}
 	chatID, err := ub.store.GetChatID(ctx, userID)
+	if err != nil {
+		ub.handleError(ctx, 0, zaperr.Wrap(err, "failed to get chatID", zapFields...))
+		return
+	}
+	zapFields = append(zapFields, zap.Int("chatID", chatID))
 
 	defaultFeed, err := ub.service.DefaultFeed(ctx, userID)
 	if err != nil {
+		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get default feed", zapFields...))
 		ub.logger.Error("onEpisodesCreated failed to get default feed", zap.Error(err))
 	}
 
+	epIDs := make([]string, 0, len(createdEpisodes))
 	for _, ep := range createdEpisodes {
-		err := ub.service.PublishEpisode(ctx, ep.ID, defaultFeed.ID, userID)
-		if err != nil {
-			ub.logger.Error("onEpisodesCreated failed to publish episode", zap.Error(err))
-		}
+		epIDs = append(epIDs, ep.ID)
+	}
+	if err := ub.service.PublishEpisodes(ctx, epIDs, defaultFeed.ID, userID); err != nil {
+		ub.logger.Error("onEpisodesCreated failed to publish episodes", zap.Error(err))
 	}
 
-	episodeIDsStr, err := formatEpisodeIDs(createdEpisodes)
+	episodeIDsStr, err := formatIDsCompactly(epIDs)
 	if err != nil {
 		ub.logger.Error("failed to format episode IDs", zap.Error(err))
 	}
@@ -164,15 +190,6 @@ To publish them to another feed, send command
 			zap.Error(err),
 		)
 	}
-}
-
-func formatEpisodeIDs(createdEpisodes []*service.Episode) (string, error) {
-	var episodeIDs []string
-	for _, episode := range createdEpisodes {
-		episodeIDs = append(episodeIDs, episode.ID)
-	}
-	formatted, err := formatIDsCompactly(episodeIDs)
-	return formatted, err
 }
 
 func getNTopExtensions(selectedNodes []*treemultiselect.TreeNode, n int) []string {

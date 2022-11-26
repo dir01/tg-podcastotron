@@ -91,7 +91,7 @@ func TestService(t *testing.T) {
 			t.Fatalf("error getting default feed of user-1: %v", err)
 		}
 
-		err = svc.PublishEpisode(ctx, ep.ID, defaultFeed.ID, "user-1")
+		err = svc.PublishEpisodes(ctx, []string{ep.ID}, defaultFeed.ID, "user-1")
 		if err != nil {
 			t.Fatalf("error publishing episode: %v", err)
 		}
@@ -127,7 +127,7 @@ func TestService(t *testing.T) {
 		// endregion
 
 		// region Unpublish episode
-		err = svc.UnpublishEpisode(ctx, ep.ID, defaultFeed.ID, "user-1")
+		err = svc.UnpublishEpisodes(ctx, []string{ep.ID}, defaultFeed.ID, "user-1")
 		if err != nil {
 			t.Fatalf("error unpublishing episode: %v", err)
 		}
@@ -152,5 +152,54 @@ func TestService(t *testing.T) {
 			t.Fatalf("expected 0 episode, got %d", len(eps))
 		}
 		// endregion
+	})
+
+	t.Run("Double publish is not allowed", func(t *testing.T) {
+		// region Create and publish
+		ep, err := svc.CreateEpisode(ctx, "some-media-url", []string{}, "user-id")
+		if err != nil {
+			t.Fatalf("error creating episode: %v", err)
+		}
+
+		defaultFeed, err := svc.DefaultFeed(ctx, "user-id")
+		if err != nil {
+			t.Fatalf("error getting default feed of user-id: %v", err)
+		}
+
+		err = svc.PublishEpisodes(ctx, []string{ep.ID}, defaultFeed.ID, "user-id")
+		if err != nil {
+			t.Fatalf("error publishing episode: %v", err)
+		}
+		// endregion
+
+		// region Second publish
+		err = svc.PublishEpisodes(ctx, []string{ep.ID}, defaultFeed.ID, "user-id")
+		if err != nil {
+			t.Fatalf("error publishing episode second time: %v", err)
+		}
+		// endregion
+
+		// region Validate that episode is only in feed once
+		defaultFeed, err = svc.DefaultFeed(ctx, "user-id")
+		if err != nil {
+			t.Fatalf("error getting default feed of user-id second time: %v", err)
+		}
+
+		if len(defaultFeed.EpisodeIDs) != 1 {
+			t.Fatalf("expected default feed of user-id to have 1 episode, got %d", len(defaultFeed.EpisodeIDs))
+		}
+		// endregion
+	})
+
+	t.Run("Unpublishing an episode that is not published does nothing", func(t *testing.T) {
+		defaultFeed, err := svc.DefaultFeed(ctx, "user-id")
+		if err != nil {
+			t.Fatalf("error getting default feed of user-id: %v", err)
+		}
+
+		err = svc.UnpublishEpisodes(ctx, []string{"some-episode-id"}, defaultFeed.ID, "user-id")
+		if err != nil {
+			t.Fatalf("error unpublishing episode: %v", err)
+		}
 	})
 }

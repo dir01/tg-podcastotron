@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"undercast-bot/mediary"
 	jobsqueue "undercast-bot/service/jobs_queue"
 )
@@ -81,21 +83,19 @@ func (svc *Service) FetchMetadata(ctx context.Context, mediaURL string) (*Metada
 	}, metadataDelays...)
 }
 
-func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, filepaths [][]string, userID string, chatID int) error {
-	svc.logger.Info(
-		"queueing episodes creation",
+func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, filepaths [][]string, userID string) error {
+	zapFields := []zap.Field{
 		zap.String("url", url),
 		zap.Any("filepaths", filepaths),
-		zap.Int("chatID", chatID),
 		zap.String("userID", userID),
-	)
+	}
+	svc.logger.Info("queueing episodes creation", zapFields...)
 	if err := svc.jobsQueue.Publish(ctx, createEpisodes, &EnqueueEpisodesPayload{
 		URL:    url,
 		Paths:  filepaths,
-		ChatID: chatID,
 		UserID: userID,
 	}); err != nil {
-		return fmt.Errorf("failed to enqueue episodes creation: %w", err)
+		return zaperr.Wrap(err, "failed to enqueue episodes creation", zapFields...)
 	}
 	return nil
 }
@@ -103,27 +103,21 @@ func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, filepat
 func (svc *Service) onQueueEpisodeCreated(ctx context.Context, payloadBytes []byte) error {
 	var payload EnqueueEpisodesPayload
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return err
+		return zaperr.Wrap(err, "failed to unmarshal payload", zap.String("payload", string(payloadBytes)))
 	}
 
-	svc.logger.Info(
-		"creating single file episode",
+	zapFields := []zap.Field{
 		zap.String("url", payload.URL),
 		zap.Any("filepaths", payload.Paths),
-		zap.Int("chatID", payload.ChatID),
-	)
+	}
+
+	svc.logger.Info("creating queued episodes", zapFields...)
 
 	var createdEpisodes []*Episode
-	for _, fps := range payload.Paths {
-		episode, err := svc.CreateEpisode(ctx, payload.URL, fps, payload.UserID)
+	for _, ePaths := range payload.Paths {
+		episode, err := svc.CreateEpisode(ctx, payload.URL, ePaths, payload.UserID)
 		if err != nil {
-			svc.logger.Error("failed to create single file episode",
-				zap.String("url", payload.URL),
-				zap.Any("filepaths", payload.Paths),
-				zap.Int("chatID", payload.ChatID),
-				zap.Error(err),
-			)
-			return err
+			return zaperr.Wrap(err, "failed to create single file episode", zapFields...)
 		}
 		createdEpisodes = append(createdEpisodes, episode)
 	}
@@ -136,9 +130,16 @@ func (svc *Service) onQueueEpisodeCreated(ctx context.Context, payloadBytes []by
 func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepaths []string, userID string) (*Episode, error) {
 	filename := uuid.New().String() + ".mp3" // TODO: implement more elaborate filename generation
 
+	zapFields := []zap.Field{
+		zap.String("mediaURL", mediaURL),
+		zap.Strings("filepaths", filepaths),
+		zap.String("filename", filename),
+		zap.String("userID", userID),
+	}
+
 	presignURL, err := svc.s3Store.PreSignedURL(fmt.Sprintf("%s/%s", userID, filename))
 	if err != nil {
-		return nil, fmt.Errorf("CreateEpisode failed to get presigned url: %w", err)
+		return nil, zaperr.Wrap(err, "failed to get presigned url", zapFields...)
 	}
 
 	mediaryID, err := svc.mediaSvc.CreateUploadJob(ctx, &mediary.CreateUploadJobParams{
@@ -150,7 +151,7 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create mediary upload job: %w", err)
+		return nil, zaperr.Wrap(err, "failed to create mediary job", zapFields...)
 	}
 
 	ep := &Episode{
@@ -163,24 +164,36 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 
 	ep, err = svc.repository.SaveEpisode(ctx, ep)
 	if err != nil {
-		return nil, fmt.Errorf("failed to save episode: %w", err)
+		return nil, zaperr.Wrap(err, "failed to save episode", zapFields...)
 	}
 
 	return ep, nil
 }
 
 func (svc *Service) IsValidURL(ctx context.Context, mediaURL string) (bool, error) {
-	return svc.mediaSvc.IsValidURL(ctx, mediaURL)
+	if isValid, err := svc.mediaSvc.IsValidURL(ctx, mediaURL); err == nil {
+		return isValid, err
+	} else {
+		return false, zaperr.Wrap(err, "failed to check if url is valid", zap.String("url", mediaURL))
+	}
 }
 
-func (svc *Service) ListEpisodes(ctx context.Context, username string) ([]*Episode, error) {
-	return svc.repository.ListUserEpisodes(ctx, username)
+func (svc *Service) ListEpisodes(ctx context.Context, userID string) ([]*Episode, error) {
+	if episodes, err := svc.repository.ListUserEpisodes(ctx, userID); err == nil {
+		return episodes, nil
+	} else {
+		return nil, zaperr.Wrap(err, "failed to list user episodes", zap.String("userID", userID))
+	}
 }
 
 func (svc *Service) ListFeeds(ctx context.Context, username string) ([]*Feed, error) {
+	zapFields := []zap.Field{
+		zap.String("username", username),
+	}
+
 	feeds, err := svc.repository.ListUserFeeds(ctx, username)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list user feeds: %w", err)
+		return nil, zaperr.Wrap(err, "failed to list user feeds", zapFields...)
 	}
 
 	for _, f := range feeds {
@@ -192,8 +205,9 @@ func (svc *Service) ListFeeds(ctx context.Context, username string) ([]*Feed, er
 	// create default feed if it doesn't exist
 	defaultFeed, err := svc.DefaultFeed(ctx, username)
 	if err != nil {
-		return nil, err
+		return nil, zaperr.Wrap(err, "failed to get default feed", zapFields...)
 	}
+
 	feeds = append([]*Feed{defaultFeed}, feeds...)
 	return feeds, nil
 }
@@ -239,24 +253,31 @@ func (svc *Service) createFeed(ctx context.Context, userID string, title string,
 	return feed, nil
 }
 
-func (svc *Service) PublishEpisode(ctx context.Context, episodeID, feedID, userID string) error {
-	episode, err := svc.repository.GetEpisode(ctx, episodeID, userID)
-	if err != nil {
-		return fmt.Errorf("failed to publish episode: %w", err)
-	}
-
+func (svc *Service) PublishEpisodes(ctx context.Context, episodeID []string, feedID, userID string) error {
 	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to publish episode: %w", err)
 	}
 
-	episode.FeedIDs = append(episode.FeedIDs, feedID)
-	episode, err = svc.repository.SaveEpisode(ctx, episode)
-	if err != nil {
-		return fmt.Errorf("failed to update episode feed ids: %w", err)
+	// FIXME: non-transactional persistence
+	for _, epID := range episodeID {
+		if slices.Contains(feed.EpisodeIDs, epID) {
+			continue
+		}
+		episode, err := svc.repository.GetEpisode(ctx, epID, userID)
+		if err != nil {
+			return fmt.Errorf("failed to publish episode: %w", err)
+		}
+
+		episode.FeedIDs = append(episode.FeedIDs, feedID)
+		episode, err = svc.repository.SaveEpisode(ctx, episode)
+		if err != nil {
+			return fmt.Errorf("failed to update episode feed ids: %w", err)
+		}
+
+		feed.EpisodeIDs = append(feed.EpisodeIDs, epID)
 	}
 
-	feed.EpisodeIDs = append(feed.EpisodeIDs, episodeID)
 	if feed, err = svc.repository.SaveFeed(ctx, feed); err != nil {
 		return fmt.Errorf("failed to update feed episode ids: %w", err)
 	}
@@ -264,24 +285,31 @@ func (svc *Service) PublishEpisode(ctx context.Context, episodeID, feedID, userI
 	return nil
 }
 
-func (svc *Service) UnpublishEpisode(ctx context.Context, episodeID, feedID, userID string) error {
-	episode, err := svc.repository.GetEpisode(ctx, episodeID, userID)
-	if err != nil {
-		return fmt.Errorf("failed to publish episode: %w", err)
-	}
-
+func (svc *Service) UnpublishEpisodes(ctx context.Context, episodeIDs []string, feedID, userID string) error {
 	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to publish episode: %w", err)
 	}
 
-	episode.FeedIDs = remove(episode.FeedIDs, feedID)
-	episode, err = svc.repository.SaveEpisode(ctx, episode)
-	if err != nil {
-		return fmt.Errorf("failed to update episode feed ids: %w", err)
+	// FIXME: non-transactional persistence
+	for _, id := range episodeIDs {
+		if !slices.Contains(feed.EpisodeIDs, id) {
+			continue
+		}
+		episode, err := svc.repository.GetEpisode(ctx, id, userID)
+		if err != nil {
+			return fmt.Errorf("failed to publish episode: %w", err)
+		}
+
+		episode.FeedIDs = remove(episode.FeedIDs, feedID)
+		episode, err = svc.repository.SaveEpisode(ctx, episode)
+		if err != nil {
+			return fmt.Errorf("failed to update episode feed ids: %w", err)
+		}
+
+		feed.EpisodeIDs = remove(feed.EpisodeIDs, id)
 	}
 
-	feed.EpisodeIDs = remove(feed.EpisodeIDs, episodeID)
 	if feed, err = svc.repository.SaveFeed(ctx, feed); err != nil {
 		return fmt.Errorf("failed to update feed episode ids: %w", err)
 	}
@@ -290,11 +318,14 @@ func (svc *Service) UnpublishEpisode(ctx context.Context, episodeID, feedID, use
 }
 
 func remove(s []string, r string) []string {
-	var i int
+	i := -1
 	for i = range s {
 		if s[i] == r {
 			break
 		}
+	}
+	if i == -1 {
+		return s
 	}
 	return append(s[:i], s[i+1:]...)
 }
