@@ -163,8 +163,38 @@ func (repo *Repository) ListUserFeeds(ctx context.Context, userID string) ([]*Fe
 	return feeds, nil
 }
 
-func (repo *Repository) ListFeedEpisodes(ctx context.Context, feedID string) ([]*Episode, error) {
-	panic("implement me")
+func (repo *Repository) ListFeedEpisodes(ctx context.Context, feed *Feed) ([]*Episode, error) {
+	redisClient := repo.redisClient.WithContext(ctx)
+
+	episodeKeys := make([]string, len(feed.EpisodeIDs))
+	for i, episodeID := range feed.EpisodeIDs {
+		episodeKeys[i] = repo.episodeKey(episodeID, feed.UserID)
+	}
+
+	rawEpisodes, err := redisClient.MGet(episodeKeys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list feed episodes: %w", err)
+	}
+
+	episodes := make([]*Episode, len(rawEpisodes))
+	for i, rawEpisode := range rawEpisodes {
+		episodes[i], err = repo.episodeFromJSON([]byte(rawEpisode.(string)))
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal episode: %w", err)
+		}
+	}
+
+	episodesMap := make(map[string]*Episode, len(episodes))
+	for _, episode := range episodes {
+		episodesMap[episode.ID] = episode
+	}
+
+	sortedEpisodes := make([]*Episode, len(feed.EpisodeIDs))
+	for i, episodeID := range feed.EpisodeIDs {
+		sortedEpisodes[i] = episodesMap[episodeID]
+	}
+
+	return sortedEpisodes, nil
 }
 
 func (repo *Repository) ListEpisodeFeeds(ctx context.Context, episodeID string) ([]*Feed, error) {

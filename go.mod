@@ -12,6 +12,7 @@ require (
 	github.com/go-telegram/bot v0.2.2
 	github.com/google/uuid v1.3.0
 	github.com/hori-ryota/zaperr v0.0.0-20210301022522-bfd0551d7f64
+	github.com/jbub/podcasts v0.2.0
 	github.com/joho/godotenv v1.4.0
 	github.com/robinjoseph08/redisqueue v1.1.0
 	github.com/testcontainers/testcontainers-go v0.14.0

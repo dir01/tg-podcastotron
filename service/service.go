@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +21,7 @@ import (
 //go:generate moq -out servicemocks/s3.go -pkg servicemocks -rm . S3Store:MockS3Store
 type S3Store interface {
 	PreSignedURL(key string) (string, error)
+	Put(ctx context.Context, key string, dataReader io.Reader) error
 }
 
 type Service struct {
@@ -36,11 +39,15 @@ type Metadata = mediary.Metadata
 type Episode struct {
 	ID              string
 	Title           string
+	PubDate         time.Time
 	UserID          string
 	SourceURL       string
 	SourceFilepaths []string
 	MediaryID       string
 	URL             string
+	Duration        time.Duration
+	FileLenBytes    int64
+	Format          string
 	FeedIDs         []string
 }
 
@@ -160,6 +167,10 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 		SourceFilepaths: filepaths,
 		URL:             stripQuery(presignURL),
 		MediaryID:       mediaryID,
+		PubDate:         time.Now(),
+		Duration:        0,     // should be populated later when job is complete
+		FileLenBytes:    0,     // should be populated later when job is complete
+		Format:          "mp3", // FIXME: hardcoded
 	}
 
 	ep, err = svc.repository.SaveEpisode(ctx, ep)
@@ -282,6 +293,8 @@ func (svc *Service) PublishEpisodes(ctx context.Context, episodeID []string, fee
 		return fmt.Errorf("failed to update feed episode ids: %w", err)
 	}
 
+	svc.regenerateFeedFile(ctx, feed)
+
 	return nil
 }
 
@@ -315,6 +328,42 @@ func (svc *Service) UnpublishEpisodes(ctx context.Context, episodeIDs []string, 
 	}
 
 	return nil
+}
+
+func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) {
+	zapFields := []zap.Field{
+		zap.String("feedID", feed.ID),
+		zap.String("userID", feed.UserID),
+	}
+	episodes, err := svc.repository.ListFeedEpisodes(ctx, feed)
+	if err != nil {
+		svc.logger.Error("failed to list feed episodes", append(zapFields, zap.Error(err))...)
+		return
+	}
+
+	var episodesMap = make(map[string]*Episode)
+	for _, ep := range episodes {
+		episodesMap[ep.ID] = ep
+	}
+
+	feedReader, err := generateFeed(feed, episodesMap)
+	if err != nil {
+		svc.logger.Error("failed to generate feed", append(zapFields, zap.Error(err))...)
+		return
+	}
+
+	parsed, err := url.Parse(feed.URL)
+	if err != nil {
+		svc.logger.Error("failed to parse feed url", append(zapFields, zap.Error(err))...)
+		return
+	}
+	objectKey := strings.TrimPrefix(parsed.Path, "/")
+
+	if err := svc.s3Store.Put(ctx, objectKey, feedReader); err != nil {
+		zapFields = append(zapFields, zap.Error(err))
+		svc.logger.Error("failed to upload feed", append(zapFields, zap.Error(err))...)
+		return
+	}
 }
 
 func remove(s []string, r string) []string {
