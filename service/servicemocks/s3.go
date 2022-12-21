@@ -4,6 +4,8 @@
 package servicemocks
 
 import (
+	"context"
+	"io"
 	"sync"
 	"undercast-bot/service"
 )
@@ -21,6 +23,9 @@ var _ service.S3Store = &MockS3Store{}
 //			PreSignedURLFunc: func(key string) (string, error) {
 //				panic("mock out the PreSignedURL method")
 //			},
+//			PutFunc: func(ctx context.Context, key string, dataReader io.Reader) error {
+//				panic("mock out the Put method")
+//			},
 //		}
 //
 //		// use mockedS3Store in code that requires service.S3Store
@@ -31,6 +36,9 @@ type MockS3Store struct {
 	// PreSignedURLFunc mocks the PreSignedURL method.
 	PreSignedURLFunc func(key string) (string, error)
 
+	// PutFunc mocks the Put method.
+	PutFunc func(ctx context.Context, key string, dataReader io.Reader) error
+
 	// calls tracks calls to the methods.
 	calls struct {
 		// PreSignedURL holds details about calls to the PreSignedURL method.
@@ -38,8 +46,18 @@ type MockS3Store struct {
 			// Key is the key argument value.
 			Key string
 		}
+		// Put holds details about calls to the Put method.
+		Put []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Key is the key argument value.
+			Key string
+			// DataReader is the dataReader argument value.
+			DataReader io.Reader
+		}
 	}
 	lockPreSignedURL sync.RWMutex
+	lockPut          sync.RWMutex
 }
 
 // PreSignedURL calls PreSignedURLFunc.
@@ -71,5 +89,45 @@ func (mock *MockS3Store) PreSignedURLCalls() []struct {
 	mock.lockPreSignedURL.RLock()
 	calls = mock.calls.PreSignedURL
 	mock.lockPreSignedURL.RUnlock()
+	return calls
+}
+
+// Put calls PutFunc.
+func (mock *MockS3Store) Put(ctx context.Context, key string, dataReader io.Reader) error {
+	if mock.PutFunc == nil {
+		panic("MockS3Store.PutFunc: method is nil but S3Store.Put was just called")
+	}
+	callInfo := struct {
+		Ctx        context.Context
+		Key        string
+		DataReader io.Reader
+	}{
+		Ctx:        ctx,
+		Key:        key,
+		DataReader: dataReader,
+	}
+	mock.lockPut.Lock()
+	mock.calls.Put = append(mock.calls.Put, callInfo)
+	mock.lockPut.Unlock()
+	return mock.PutFunc(ctx, key, dataReader)
+}
+
+// PutCalls gets all the calls that were made to Put.
+// Check the length with:
+//
+//	len(mockedS3Store.PutCalls())
+func (mock *MockS3Store) PutCalls() []struct {
+	Ctx        context.Context
+	Key        string
+	DataReader io.Reader
+} {
+	var calls []struct {
+		Ctx        context.Context
+		Key        string
+		DataReader io.Reader
+	}
+	mock.lockPut.RLock()
+	calls = mock.calls.Put
+	mock.lockPut.RUnlock()
 	return calls
 }

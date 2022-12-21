@@ -131,30 +131,54 @@ func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, filepath
 	}
 }
 
-func (ub *UndercastBot) onEpisodesCreated(ctx context.Context, createdEpisodes []*service.Episode) {
-	userID := createdEpisodes[0].UserID // ¯\_(ツ)_/¯
+func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStatusChanges []service.EpisodeStatusChange) {
+	userToStatusToChanges := make(map[string]map[service.EpisodeStatus][]service.EpisodeStatusChange)
+	for _, change := range episodeStatusChanges {
+		if _, exists := userToStatusToChanges[change.Episode.UserID]; !exists {
+			userToStatusToChanges[change.Episode.UserID] = make(map[service.EpisodeStatus][]service.EpisodeStatusChange)
+		}
+		userToStatusToChanges[change.Episode.UserID][change.NewStatus] = append(userToStatusToChanges[change.Episode.UserID][change.NewStatus], change)
+	}
+
+	for userID, statusToChangesMap := range userToStatusToChanges {
+		chatID, err := ub.store.GetChatID(ctx, userID) // TODO: change to bulk get
+		if err != nil {
+			ub.handleError(ctx, 0, zaperr.Wrap(err, "failed to get chatID", zap.String("userID", userID)))
+			return
+		}
+
+		if changesCreated, exists := statusToChangesMap[service.EpisodeStatusCreated]; exists && len(changesCreated) > 0 {
+			delete(statusToChangesMap, service.EpisodeStatusCreated)
+			ub.handleEpisodesCreated(ctx, userID, chatID, changesCreated)
+		}
+
+		var otherChanges []service.EpisodeStatusChange
+		for _, changes := range statusToChangesMap {
+			otherChanges = append(otherChanges, changes...)
+		}
+		if len(otherChanges) > 0 {
+			ub.notifyStatusChanged(ctx, userID, chatID, otherChanges)
+		}
+	}
+}
+
+func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string, chatID int, changes []service.EpisodeStatusChange) {
 	zapFields := []zap.Field{
 		zap.String("userID", userID),
+		zap.Int("chatID", chatID),
 	}
-	chatID, err := ub.store.GetChatID(ctx, userID)
-	if err != nil {
-		ub.handleError(ctx, 0, zaperr.Wrap(err, "failed to get chatID", zapFields...))
-		return
-	}
-	zapFields = append(zapFields, zap.Int("chatID", chatID))
 
 	defaultFeed, err := ub.service.DefaultFeed(ctx, userID)
 	if err != nil {
 		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get default feed", zapFields...))
-		ub.logger.Error("onEpisodesCreated failed to get default feed", zap.Error(err))
 	}
 
-	epIDs := make([]string, 0, len(createdEpisodes))
-	for _, ep := range createdEpisodes {
-		epIDs = append(epIDs, ep.ID)
+	epIDs := make([]string, 0, len(changes))
+	for _, statusChange := range changes {
+		epIDs = append(epIDs, statusChange.Episode.ID)
 	}
 	if err := ub.service.PublishEpisodes(ctx, epIDs, defaultFeed.ID, userID); err != nil {
-		ub.logger.Error("onEpisodesCreated failed to publish episodes", zap.Error(err))
+		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zap.Error(err))
 	}
 
 	episodeIDsStr, err := formatIDsCompactly(epIDs)
@@ -164,8 +188,8 @@ func (ub *UndercastBot) onEpisodesCreated(ctx context.Context, createdEpisodes [
 
 	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: chatID,
-		Text: fmt.Sprintf(
-			`%d episodes are scheduled.
+		Text: fmt.Sprintf(`
+%d episodes are scheduled.
 After they are processed, they will be published to default feed:
 <b>%s</b>
 %s
@@ -177,7 +201,7 @@ To unpublish them from default feed, send command
 To publish them to another feed, send command
 
 /publish_ep_%s`,
-			len(createdEpisodes), defaultFeed.Title, defaultFeed.URL,
+			len(changes), defaultFeed.Title, defaultFeed.URL,
 			episodeIDsStr, defaultFeed.ID,
 			episodeIDsStr,
 		),
@@ -189,6 +213,12 @@ To publish them to another feed, send command
 			zap.Int("chatID", chatID),
 			zap.Error(err),
 		)
+	}
+}
+
+func (ub *UndercastBot) notifyStatusChanged(ctx context.Context, userID string, chatID int, changes []service.EpisodeStatusChange) {
+	for _, change := range changes {
+		ub.sendTextMessage(ctx, chatID, "Episode #%s (%s) is now %s", change.Episode.ID, change.Episode.Title, change.NewStatus)
 	}
 }
 

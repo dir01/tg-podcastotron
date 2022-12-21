@@ -22,6 +22,9 @@ var _ mediary.Service = &ServiceMock{}
 //			CreateUploadJobFunc: func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error) {
 //				panic("mock out the CreateUploadJob method")
 //			},
+//			FetchJobStatusMapFunc: func(ctx context.Context, jobIDs []string) (map[string]*mediary.JobStatus, error) {
+//				panic("mock out the FetchJobStatusMap method")
+//			},
 //			FetchMetadataLongPollingFunc: func(ctx context.Context, mediaURL string) (*mediary.Metadata, error) {
 //				panic("mock out the FetchMetadataLongPolling method")
 //			},
@@ -38,6 +41,9 @@ type ServiceMock struct {
 	// CreateUploadJobFunc mocks the CreateUploadJob method.
 	CreateUploadJobFunc func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error)
 
+	// FetchJobStatusMapFunc mocks the FetchJobStatusMap method.
+	FetchJobStatusMapFunc func(ctx context.Context, jobIDs []string) (map[string]*mediary.JobStatus, error)
+
 	// FetchMetadataLongPollingFunc mocks the FetchMetadataLongPolling method.
 	FetchMetadataLongPollingFunc func(ctx context.Context, mediaURL string) (*mediary.Metadata, error)
 
@@ -52,6 +58,13 @@ type ServiceMock struct {
 			Ctx context.Context
 			// Params is the params argument value.
 			Params *mediary.CreateUploadJobParams
+		}
+		// FetchJobStatusMap holds details about calls to the FetchJobStatusMap method.
+		FetchJobStatusMap []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// JobIDs is the jobIDs argument value.
+			JobIDs []string
 		}
 		// FetchMetadataLongPolling holds details about calls to the FetchMetadataLongPolling method.
 		FetchMetadataLongPolling []struct {
@@ -69,6 +82,7 @@ type ServiceMock struct {
 		}
 	}
 	lockCreateUploadJob          sync.RWMutex
+	lockFetchJobStatusMap        sync.RWMutex
 	lockFetchMetadataLongPolling sync.RWMutex
 	lockIsValidURL               sync.RWMutex
 }
@@ -106,6 +120,42 @@ func (mock *ServiceMock) CreateUploadJobCalls() []struct {
 	mock.lockCreateUploadJob.RLock()
 	calls = mock.calls.CreateUploadJob
 	mock.lockCreateUploadJob.RUnlock()
+	return calls
+}
+
+// FetchJobStatusMap calls FetchJobStatusMapFunc.
+func (mock *ServiceMock) FetchJobStatusMap(ctx context.Context, jobIDs []string) (map[string]*mediary.JobStatus, error) {
+	if mock.FetchJobStatusMapFunc == nil {
+		panic("ServiceMock.FetchJobStatusMapFunc: method is nil but Service.FetchJobStatusMap was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		JobIDs []string
+	}{
+		Ctx:    ctx,
+		JobIDs: jobIDs,
+	}
+	mock.lockFetchJobStatusMap.Lock()
+	mock.calls.FetchJobStatusMap = append(mock.calls.FetchJobStatusMap, callInfo)
+	mock.lockFetchJobStatusMap.Unlock()
+	return mock.FetchJobStatusMapFunc(ctx, jobIDs)
+}
+
+// FetchJobStatusMapCalls gets all the calls that were made to FetchJobStatusMap.
+// Check the length with:
+//
+//	len(mockedService.FetchJobStatusMapCalls())
+func (mock *ServiceMock) FetchJobStatusMapCalls() []struct {
+	Ctx    context.Context
+	JobIDs []string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		JobIDs []string
+	}
+	mock.lockFetchJobStatusMap.RLock()
+	calls = mock.calls.FetchJobStatusMap
+	mock.lockFetchJobStatusMap.RUnlock()
 	return calls
 }
 

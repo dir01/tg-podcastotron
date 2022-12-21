@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"time"
+	"strconv"
 
 	"github.com/jbub/podcasts"
 )
@@ -20,11 +20,11 @@ func generateFeed(feed *Feed, episodesMap map[string]*Episode) (io.Reader, error
 			Title:    fmt.Sprintf("%s (#%s)", e.Title, e.ID),
 			GUID:     e.ID,
 			PubDate:  podcasts.NewPubDate(e.PubDate),
-			Duration: podcasts.NewDuration(time.Second * 230),
+			Duration: podcasts.NewDuration(e.Duration),
 			Enclosure: &podcasts.Enclosure{
 				URL:    e.URL,
-				Length: "12312",
-				Type:   "MP3",
+				Length: strconv.FormatInt(e.FileLenBytes, 10),
+				Type:   e.Format,
 			},
 		})
 	}

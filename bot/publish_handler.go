@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
+	"undercast-bot/service"
 )
 
 const publishHelp = `
@@ -34,15 +36,19 @@ func (ub *UndercastBot) publishEpisodesHandler(ctx context.Context, b *bot.Bot, 
 
 	epIDs, feedID, err := ub.parsePublishEpisodesCommand(update.Message.Text)
 	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to parse publish command", zapFields...))
 		ub.sendTextMessage(ctx, update.Message.Chat.ID, publishHelp)
+		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to parse publish command", zapFields...))
 		return
 	}
 
 	zapFields = append(zapFields, zap.Strings("episodeIDs", epIDs), zap.String("feedID", feedID))
 
 	if err := ub.service.PublishEpisodes(ctx, epIDs, feedID, ub.extractUsername(update)); err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to publish episodes", zapFields...))
+		if errors.Is(err, service.ErrFeedNotFound) {
+			ub.sendTextMessage(ctx, update.Message.Chat.ID, publishHelp+"\n\nFeed not found")
+		} else {
+			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to publish episodes", zapFields...))
+		}
 		return
 	}
 

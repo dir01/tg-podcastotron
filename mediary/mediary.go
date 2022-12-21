@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -15,6 +17,7 @@ type Service interface {
 	IsValidURL(ctx context.Context, mediaURL string) (bool, error)
 	FetchMetadataLongPolling(ctx context.Context, mediaURL string) (*Metadata, error)
 	CreateUploadJob(ctx context.Context, params *CreateUploadJobParams) (jobID string, err error)
+	FetchJobStatusMap(ctx context.Context, jobIDs []string) (map[string]*JobStatus, error)
 }
 
 func New(mediaryURL string, logger *zap.Logger) Service {
@@ -55,6 +58,23 @@ type ConcatenateJobParams struct {
 	AudioCodec string   `json:"audioCodec"`
 	UploadURL  string   `json:"uploadUrl"`
 }
+
+type JobStatus struct {
+	Id                  string        `json:"id"`
+	Status              JobStatusName `json:"status"`
+	ResultMediaDuration time.Duration `json:"result_media_duration"`
+	ResultFileBytes     int64         `json:"result_file_bytes"`
+}
+
+type JobStatusName string
+
+const (
+	JobStatusAccepted    JobStatusName = "accepted"
+	JobStatusDownloading JobStatusName = "downloading"
+	JobStatusProcessing  JobStatusName = "processing"
+	JobStatusUploading   JobStatusName = "uploading"
+	JobStatusComplete    JobStatusName = "complete"
+)
 
 func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, error) {
 	fullURL := fmt.Sprintf("%s/metadata?url=%s", svc.baseURL, mediaURL)
@@ -134,4 +154,46 @@ func (svc *service) CreateUploadJob(ctx context.Context, params *CreateUploadJob
 	}
 
 	return respBody.ID, nil
+}
+
+func (svc *service) FetchJobStatusMap(ctx context.Context, jobIDs []string) (map[string]*JobStatus, error) {
+	// TODO: implement bulk job status fetching on mediary side
+	var wg sync.WaitGroup
+	jobStatusChan := make(chan *JobStatus, len(jobIDs))
+	for _, jobID := range jobIDs {
+		wg.Add(1)
+
+		go func(jobID string) {
+			defer wg.Done()
+
+			fullURL := fmt.Sprintf("%s/jobs/%s", svc.baseURL, jobID)
+			svc.logger.Debug("fetching job status", zap.String("url", fullURL))
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+			if err != nil {
+				svc.logger.Error("failed to create request", zap.Error(err))
+				return
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				svc.logger.Error("failed to call mediary API", zap.Error(err))
+				return
+			}
+			var jobStatus JobStatus
+			if err := json.NewDecoder(resp.Body).Decode(&jobStatus); err != nil {
+				svc.logger.Error("error decoding mediary response", zap.Error(err))
+				return
+			}
+			jobStatusChan <- &jobStatus
+		}(jobID)
+	}
+
+	wg.Wait()
+	close(jobStatusChan)
+
+	jobStatusMap := make(map[string]*JobStatus, len(jobIDs))
+	for jobStatus := range jobStatusChan {
+		jobStatusMap[jobStatus.Id] = jobStatus
+	}
+
+	return jobStatusMap, nil
 }

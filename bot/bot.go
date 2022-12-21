@@ -29,7 +29,7 @@ type UndercastBot struct {
 	service *service.Service
 	store   *RedisStore
 
-	episodesChan chan []*service.Episode
+	episodesStatusChangesChan chan []service.EpisodeStatusChange
 }
 
 func (ub *UndercastBot) Start(ctx context.Context) {
@@ -38,14 +38,14 @@ func (ub *UndercastBot) Start(ctx context.Context) {
 		bot.WithMiddlewares(ub.authenticate, ub.setMenuMiddleware),
 	}
 
-	ub.episodesChan = ub.service.Start(ctx)
+	ub.episodesStatusChangesChan = ub.service.Start(ctx)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case episodes := <-ub.episodesChan:
-				ub.onEpisodesCreated(ctx, episodes)
+			case statusChanges := <-ub.episodesStatusChangesChan:
+				ub.onEpisodesStatusChanges(ctx, statusChanges)
 			}
 		}
 	}()
@@ -55,6 +55,7 @@ func (ub *UndercastBot) Start(ctx context.Context) {
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, ub.helpHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/episodes", bot.MatchTypeExact, ub.episodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/feeds", bot.MatchTypeExact, ub.feedsHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/addfeed", bot.MatchTypeExact, ub.addFeedHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/unpublish_ep", bot.MatchTypePrefix, ub.unpublishEpisodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/publish_ep", bot.MatchTypePrefix, ub.publishEpisodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/playground", bot.MatchTypeExact, ub.playgroundHandler)

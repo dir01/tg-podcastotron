@@ -2,7 +2,7 @@ package bot
 
 import (
 	"context"
-	"strconv"
+	"fmt"
 
 	"github.com/go-redis/redis"
 )
@@ -21,18 +21,18 @@ func NewRedisStore(redisClient *redis.Client, keyPrefix string) *RedisStore {
 
 func (rs *RedisStore) SetChatID(ctx context.Context, userID string, chatID int) error {
 	redisClient := rs.redisClient.WithContext(ctx)
-	return redisClient.Set(rs.chatIDKey(userID), chatID, 0).Err()
+	return redisClient.HSet(rs.chatIDsKey(), userID, chatID).Err()
 }
 
 func (rs *RedisStore) GetChatID(ctx context.Context, userID string) (int, error) {
 	redisClient := rs.redisClient.WithContext(ctx)
-	chatIDStr, err := redisClient.Get(rs.chatIDKey(userID)).Result()
+	chatID, err := redisClient.HGet(rs.chatIDsKey(), userID).Int()
 	if err != nil {
 		return -1, err
 	}
-	return strconv.Atoi(chatIDStr)
+	return chatID, nil
 }
 
-func (rs *RedisStore) chatIDKey(userID string) string {
-	return userID
+func (rs *RedisStore) chatIDsKey() string {
+	return fmt.Sprintf("%s:chat_ids", rs.keyPrefix)
 }

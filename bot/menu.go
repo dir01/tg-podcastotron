@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var sentMenusCache = make(map[string]bool) // TODO: cache invalidatation
+var sentMenusCache = make(map[string]bool) // TODO: cache invalidation
 
 func (ub *UndercastBot) setMenuMiddleware(next bot.HandlerFunc) bot.HandlerFunc {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {

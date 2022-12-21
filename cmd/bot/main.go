@@ -85,7 +85,7 @@ func main() {
 	// endregion
 
 	// region jobs queue
-	jobsQueue, err := jobsqueue.NewRedisJobsQueue(redisClient, 10, "undercast-bot-jobs", logger)
+	jobsQueue, err := jobsqueue.NewRedisJobsQueue(redisClient, 10, "undercast:jobs", logger)
 	if err != nil {
 		logger.Fatal("error creating jobs queue", zap.Error(err))
 	}
