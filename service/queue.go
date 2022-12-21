@@ -1,5 +1,9 @@
 package service
 
+import (
+	"time"
+)
+
 const (
 	createEpisodes     = "create_episodes"
 	pollEpisodesStatus = "poll_episodes_status"
@@ -15,6 +19,7 @@ type CreateEpisodesQueuePayload struct {
 type PollEpisodesStatusQueuePayload struct {
 	EpisodeIDs []string
 	UserID     string
+	PollAfter  *time.Time
 }
 
 type RegenerateFeedQueuePayload struct {

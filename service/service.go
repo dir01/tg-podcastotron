@@ -411,6 +411,21 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	zapFields := []zap.Field{
 		zap.Strings("episodeIDs", payload.EpisodeIDs),
 		zap.String("userID", payload.UserID),
+		zap.Any("pollAfter", payload.PollAfter),
+	}
+
+	if payload.PollAfter != nil {
+		sleepDuration := time.Until(*payload.PollAfter)
+		if sleepDuration > 0 {
+			svc.logger.Debug("sleeping before polling episodes", append([]zap.Field{
+				zap.Duration("sleepDuration", sleepDuration),
+			}, zapFields...)...)
+			select {
+			case <-time.After(sleepDuration):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
 	}
 
 	svc.logger.Info("polling episode status", zapFields...)
@@ -510,9 +525,11 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	}
 
 	if len(episodeIDsToRequeue) > 0 {
+		pollAfter := time.Now().Add(10 * time.Second)
 		if err := svc.jobsQueue.Publish(ctx, pollEpisodesStatus, &PollEpisodesStatusQueuePayload{
 			EpisodeIDs: episodeIDsToRequeue,
 			UserID:     payload.UserID,
+			PollAfter:  &pollAfter,
 		}); err != nil {
 			return zaperr.Wrap(err, "failed to enqueue episode status polling", append([]zap.Field{zap.Strings("episodeIDs", episodeIDsToRequeue)}, zapFields...)...)
 		}
