@@ -162,6 +162,7 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 	}
 
 	ep := &Episode{
+		Title:           generateEpisodeTitle(filepaths),
 		UserID:          userID,
 		SourceURL:       mediaURL,
 		SourceFilepaths: filepaths,
