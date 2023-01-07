@@ -15,8 +15,10 @@ var sentMenusCache = make(map[string]bool) // TODO: cache invalidation
 func (ub *UndercastBot) setMenuMiddleware(next bot.HandlerFunc) bot.HandlerFunc {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		commands := []models.BotCommand{
+			{"help", "Display bot help"},
 			{"episodes", "List all your episodes"},
-			{"feeds", "List all your feeds"},
+			{"feeds", "List all your podcast feeds"},
+			//{"addFeed", "Create a new podcast feed"},
 		}
 
 		username := ub.extractUsername(update)

@@ -181,6 +181,9 @@ func (repo *Repository) GetEpisodesMap(ctx context.Context, episodeIDs []string,
 
 	episodes := make([]*Episode, len(rawEpisodes))
 	for i, rawEpisode := range rawEpisodes {
+		if rawEpisode == nil {
+			return nil, fmt.Errorf("failed to get episode: %w", err)
+		}
 		episodes[i], err = repo.episodeFromJSON([]byte(rawEpisode.(string)))
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal episode: %w", err)
@@ -221,6 +224,31 @@ func (repo *Repository) GetFeedsMap(ctx context.Context, feedIDs []string, userI
 	}
 
 	return feedsMap, nil
+}
+
+func (repo *Repository) DeleteEpisodes(ctx context.Context, episodeIDs []string, userID string) error {
+	redisClient := repo.redisClient.WithContext(ctx)
+
+	episodeKeys := make([]string, len(episodeIDs))
+	for i, eID := range episodeIDs {
+		episodeKeys[i] = repo.episodeFieldKey(userID, eID)
+	}
+
+	_, err := redisClient.HDel(repo.episodeMapKey(), episodeKeys...).Result()
+	if err != nil {
+		return fmt.Errorf("failed to delete episodes: %w", err)
+	}
+
+	setEpisodeIDs := make([]interface{}, len(episodeIDs), len(episodeIDs))
+	for _, eID := range episodeIDs {
+		setEpisodeIDs = append(setEpisodeIDs, eID)
+	}
+
+	if err = redisClient.SRem(repo.userEpisodesSetKey(userID), setEpisodeIDs...).Err(); err != nil {
+		return fmt.Errorf("failed to delete user episodes: %w", err)
+	}
+
+	return nil
 }
 
 // region ids

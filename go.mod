@@ -9,16 +9,19 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.27.11
 	github.com/docker/go-connections v0.4.0
 	github.com/go-redis/redis v6.15.9+incompatible
-	github.com/go-telegram/bot v0.2.2
+	github.com/go-telegram/bot v0.3.2
 	github.com/google/uuid v1.3.0
 	github.com/hori-ryota/zaperr v0.0.0-20210301022522-bfd0551d7f64
 	github.com/jbub/podcasts v0.2.0
 	github.com/joho/godotenv v1.4.0
 	github.com/robinjoseph08/redisqueue v1.1.0
 	github.com/testcontainers/testcontainers-go v0.14.0
+	go.uber.org/multierr v1.6.0
 	go.uber.org/zap v1.23.0
 	golang.org/x/exp v0.0.0-20221006183845-316c7553db56
 )
+
+replace github.com/go-telegram/bot => github.com/dir01/bot v0.0.0-20221224210533-2d3fa4024dc0
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
@@ -73,7 +76,6 @@ require (
 	github.com/urfave/cli v1.22.2 // indirect
 	go.opencensus.io v0.23.0 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
-	go.uber.org/multierr v1.6.0 // indirect
 	golang.org/x/net v0.0.0-20220722155237-a158d28d115b // indirect
 	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f // indirect
 	golang.org/x/tools v0.1.12 // indirect

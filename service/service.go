@@ -14,6 +14,7 @@ import (
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"undercast-bot/mediary"
 	jobsqueue "undercast-bot/service/jobs_queue"
@@ -198,12 +199,20 @@ func (svc *Service) ListEpisodes(ctx context.Context, userID string) ([]*Episode
 	}
 }
 
-func (svc *Service) ListFeeds(ctx context.Context, username string) ([]*Feed, error) {
+func (svc *Service) GetEpisodesMap(ctx context.Context, ids []string, userID string) (map[string]*Episode, error) {
+	if episodes, err := svc.repository.GetEpisodesMap(ctx, ids, userID); err == nil {
+		return episodes, nil
+	} else {
+		return nil, zaperr.Wrap(err, "failed to get episodes map", zap.Strings("ids", ids))
+	}
+}
+
+func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, error) {
 	zapFields := []zap.Field{
-		zap.String("username", username),
+		zap.String("username", userID),
 	}
 
-	feeds, err := svc.repository.ListUserFeeds(ctx, username)
+	feeds, err := svc.repository.ListUserFeeds(ctx, userID)
 	if err != nil {
 		return nil, zaperr.Wrap(err, "failed to list user feeds", zapFields...)
 	}
@@ -215,7 +224,7 @@ func (svc *Service) ListFeeds(ctx context.Context, username string) ([]*Feed, er
 	}
 
 	// create default feed if it doesn't exist
-	defaultFeed, err := svc.DefaultFeed(ctx, username)
+	defaultFeed, err := svc.DefaultFeed(ctx, userID)
 	if err != nil {
 		return nil, zaperr.Wrap(err, "failed to get default feed", zapFields...)
 	}
@@ -334,6 +343,73 @@ func (svc *Service) UnpublishEpisodes(ctx context.Context, episodeIDs []string, 
 	}); err != nil {
 		return zaperr.Wrap(err, "failed to publish regenerate feed job", zapFields...)
 	}
+
+	return nil
+}
+
+func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitlePattern string, userID string) error {
+	zapFields := []zap.Field{
+		zap.Strings("episodeIDs", epIDs),
+		zap.String("newTitlePattern", newTitlePattern),
+		zap.String("userID", userID),
+	}
+
+	episodesMap, err := svc.repository.GetEpisodesMap(ctx, epIDs, userID)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to get episodes", zapFields...)
+	}
+
+	for _, ep := range episodesMap {
+		newTitle := getUpdatedEpisodeTitle(ep.Title, newTitlePattern)
+		if newTitle != ep.Title {
+			ep.Title = newTitle
+			if _, err := svc.repository.SaveEpisode(ctx, ep); err != nil { // TODO: batch save
+				return zaperr.Wrap(err, "failed to save episode", zapFields...)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID string) error {
+	zapFields := []zap.Field{
+		zap.Strings("episodeIDs", epIDs),
+		zap.String("userID", userID),
+	}
+
+	episodesMap, err := svc.repository.GetEpisodesMap(ctx, epIDs, userID)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to get episodes", zapFields...)
+	}
+
+	feedIDsMap := make(map[string]bool, len(episodesMap)*2)
+	for _, ep := range episodesMap {
+		for _, feedID := range ep.FeedIDs {
+			feedIDsMap[feedID] = true
+		}
+	}
+	feedIDs := maps.Keys(feedIDsMap)
+
+	zapFields = append(zapFields, zap.Strings("feedIDs", feedIDs))
+
+	feedsMap, err := svc.repository.GetFeedsMap(ctx, feedIDs, userID)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to get feeds map", zapFields...)
+	}
+
+	for _, f := range feedsMap {
+		f.EpisodeIDs = remove(f.EpisodeIDs, epIDs...)
+		if _, err := svc.repository.SaveFeed(ctx, f); err != nil { // TODO: batch save
+			return zaperr.Wrap(err, "failed to save feed", zapFields...)
+		}
+	}
+
+	if err := svc.repository.DeleteEpisodes(ctx, epIDs, userID); err != nil {
+		return zaperr.Wrap(err, "failed to delete episodes", zapFields...)
+	}
+
+	// TODO: delete episodes from s3
 
 	return nil
 }
@@ -616,17 +692,14 @@ func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, erro
 	return "", zaperr.New("unknown job status", zap.String("status", string(status)))
 }
 
-func remove(s []string, r string) []string {
-	i := -1
-	for i = range s {
-		if s[i] == r {
-			break
+func remove(s []string, removed ...string) []string {
+	var result []string
+	for _, v := range s {
+		if !slices.Contains(removed, v) {
+			result = append(result, v)
 		}
 	}
-	if i == -1 {
-		return s
-	}
-	return append(s[:i], s[i+1:]...)
+	return result
 }
 
 func stripQuery(url string) string {

@@ -12,7 +12,7 @@ import (
 	"undercast-bot/service"
 )
 
-func (ub *UndercastBot) episodesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	userID := ub.extractUsername(update)
 	if userID == "" {
 		return
@@ -52,7 +52,7 @@ func (ub *UndercastBot) episodesHandler(ctx context.Context, b *bot.Bot, update 
 	}
 
 	for _, ep := range episodes {
-		text := ub.renderEpisode(ep, feedMap)
+		text := ub.renderEpisodeFull(ep, feedMap)
 		if msg, err := b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID:    update.Message.Chat.ID,
 			ParseMode: models.ParseModeHTML,
@@ -64,14 +64,14 @@ func (ub *UndercastBot) episodesHandler(ctx context.Context, b *bot.Bot, update 
 	}
 }
 
-func (ub *UndercastBot) renderEpisode(ep *service.Episode, feedMap map[string]*service.Feed) string {
+func (ub *UndercastBot) renderEpisodeFull(ep *service.Episode, feedMap map[string]*service.Feed) string {
 	var feedsDescriptionBits []string
 	for _, f := range ep.FeedIDs {
 		feedsDescriptionBits = append(feedsDescriptionBits, fmt.Sprintf("- %s (%s)", feedMap[f].ID, feedMap[f].Title))
 	}
 	feedsDescription := strings.Join(feedsDescriptionBits, "\n")
 
-	return fmt.Sprintf(`Episode #<code>%s</code> (%s)
+	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b>
 
 <b>Source:</b>
 <code>%s</code>
@@ -79,12 +79,21 @@ func (ub *UndercastBot) renderEpisode(ep *service.Episode, feedMap map[string]*s
 <b>Files:</b>
 <code>- %s</code>
 
-<b>Published to feeds:</b>
+Published to feeds:
 %s`,
 		ep.ID,
 		ep.Title,
 		ep.SourceURL,
 		strings.Join(ep.SourceFilepaths, "\n- "),
 		feedsDescription,
+	)
+}
+
+func (ub *UndercastBot) renderEpisodeShort(ep *service.Episode, feedMap map[string]*service.Feed) string {
+	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b>
+<code>- %s</code>`,
+		ep.ID,
+		ep.Title,
+		strings.Join(ep.SourceFilepaths, "\n- "),
 	)
 }

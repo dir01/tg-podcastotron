@@ -50,12 +50,13 @@ func (ub *UndercastBot) Start(ctx context.Context) {
 		}
 	}()
 
-	ub.bot = bot.New(ub.token, opts...)
+	ub.bot, _ = bot.New(ub.token, opts...)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, ub.helpHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, ub.helpHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/episodes", bot.MatchTypeExact, ub.episodesHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/episodes", bot.MatchTypeExact, ub.listEpisodesHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/editEpisodes", bot.MatchTypePrefix, ub.editEpisodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/feeds", bot.MatchTypeExact, ub.feedsHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/addfeed", bot.MatchTypeExact, ub.addFeedHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/addFeed", bot.MatchTypeExact, ub.addFeedHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/unpublish_ep", bot.MatchTypePrefix, ub.unpublishEpisodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/publish_ep", bot.MatchTypePrefix, ub.publishEpisodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/playground", bot.MatchTypeExact, ub.playgroundHandler)

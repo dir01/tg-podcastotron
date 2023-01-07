@@ -2,10 +2,14 @@ package service
 
 import (
 	"path"
+	"regexp"
 	"strings"
 )
 
 func generateEpisodeTitle(filepaths []string) string {
+	if len(filepaths) == 0 {
+		return ""
+	}
 	// If there is only one file, use the filename as the title.
 	if len(filepaths) == 1 {
 		base := path.Base(filepaths[0])
@@ -27,4 +31,16 @@ func generateEpisodeTitle(filepaths []string) string {
 	}
 
 	return path.Base(prefix)
+}
+
+func getUpdatedEpisodeTitle(oldTitle string, newTitlePattern string) (newTitle string) {
+	if !strings.Contains(newTitlePattern, "%n") {
+		return newTitlePattern
+	}
+	re := regexp.MustCompile(`(\d+)[^\d]*$`)
+	matches := re.FindStringSubmatch(oldTitle)
+	if len(matches) == 0 {
+		return newTitlePattern
+	}
+	return strings.Replace(newTitlePattern, "%n", matches[1], 1)
 }
