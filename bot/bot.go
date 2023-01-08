@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/google/uuid"
+	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
 	"undercast-bot/auth"
 	"undercast-bot/service"
@@ -32,7 +33,7 @@ type UndercastBot struct {
 	episodesStatusChangesChan chan []service.EpisodeStatusChange
 }
 
-func (ub *UndercastBot) Start(ctx context.Context) {
+func (ub *UndercastBot) Start(ctx context.Context) error {
 	opts := []bot.Option{
 		bot.WithDefaultHandler(ub.urlHandler),
 		bot.WithMiddlewares(ub.authenticate, ub.setMenuMiddleware),
@@ -50,7 +51,12 @@ func (ub *UndercastBot) Start(ctx context.Context) {
 		}
 	}()
 
-	ub.bot, _ = bot.New(ub.token, opts...)
+	var err error
+	ub.bot, err = bot.New(ub.token, opts...)
+	if err != nil {
+		return zaperr.Wrap(err, "error while creating go-telegram/bot")
+	}
+
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, ub.helpHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, ub.helpHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/episodes", bot.MatchTypeExact, ub.listEpisodesHandler)
@@ -61,6 +67,8 @@ func (ub *UndercastBot) Start(ctx context.Context) {
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/publish_ep", bot.MatchTypePrefix, ub.publishEpisodesHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/playground", bot.MatchTypeExact, ub.playgroundHandler)
 	ub.bot.Start(ctx)
+
+	return nil
 }
 
 type Metadata struct {

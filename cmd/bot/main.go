@@ -99,5 +99,7 @@ func main() {
 	botStore := bot.NewRedisStore(redisClient, "undercast:bot")
 	botAuthService := auth.New(adminUsername)
 	ubot := bot.NewUndercastBot(botToken, botAuthService, botStore, svc, logger)
-	ubot.Start(ctx)
+	if err := ubot.Start(ctx); err != nil {
+		logger.Fatal("error starting bot", zap.Error(err))
+	}
 }
