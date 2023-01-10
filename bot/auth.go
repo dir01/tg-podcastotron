@@ -30,7 +30,7 @@ func (ub *UndercastBot) authenticate(next bot.HandlerFunc) bot.HandlerFunc {
 	}
 }
 
-func (ub *UndercastBot) extractChatID(update *models.Update, username string) int {
+func (ub *UndercastBot) extractChatID(update *models.Update, username string) int64 {
 	if update.Message != nil {
 		return update.Message.Chat.ID
 	} else if update.CallbackQuery != nil {

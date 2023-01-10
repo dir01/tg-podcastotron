@@ -19,14 +19,14 @@ func NewRedisStore(redisClient *redis.Client, keyPrefix string) *RedisStore {
 	}
 }
 
-func (rs *RedisStore) SetChatID(ctx context.Context, userID string, chatID int) error {
+func (rs *RedisStore) SetChatID(ctx context.Context, userID string, chatID int64) error {
 	redisClient := rs.redisClient.WithContext(ctx)
 	return redisClient.HSet(rs.chatIDsKey(), userID, chatID).Err()
 }
 
-func (rs *RedisStore) GetChatID(ctx context.Context, userID string) (int, error) {
+func (rs *RedisStore) GetChatID(ctx context.Context, userID string) (int64, error) {
 	redisClient := rs.redisClient.WithContext(ctx)
-	chatID, err := redisClient.HGet(rs.chatIDsKey(), userID).Int()
+	chatID, err := redisClient.HGet(rs.chatIDsKey(), userID).Int64()
 	if err != nil {
 		return -1, err
 	}

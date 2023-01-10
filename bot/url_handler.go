@@ -16,7 +16,7 @@ import (
 
 func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {
 	zapFields := []zap.Field{
-		zap.Int("chatID", update.Message.Chat.ID),
+		zap.Int64("chatID", update.Message.Chat.ID),
 		zap.String("messageText", update.Message.Text),
 	}
 
@@ -119,11 +119,11 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 	}
 }
 
-func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, filepaths [][]string, chatID int, userID string) {
+func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, filepaths [][]string, chatID int64, userID string) {
 	if err := ub.service.CreateEpisodesAsync(ctx, url, filepaths, userID); err != nil {
 		ub.handleError(ctx, chatID, zaperr.Wrap(
 			err, "failed to enqueue episodes creation",
-			zap.Int("chatID", chatID),
+			zap.Int64("chatID", chatID),
 			zap.String("userID", userID),
 			zap.String("url", url),
 			zap.Any("filepaths", filepaths),
@@ -162,10 +162,10 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 	}
 }
 
-func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string, chatID int, changes []service.EpisodeStatusChange) {
+func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string, chatID int64, changes []service.EpisodeStatusChange) {
 	zapFields := []zap.Field{
 		zap.String("userID", userID),
-		zap.Int("chatID", chatID),
+		zap.Int64("chatID", chatID),
 	}
 
 	defaultFeed, err := ub.service.DefaultFeed(ctx, userID)
@@ -210,13 +210,13 @@ To publish them to another feed, send command
 	}); err != nil {
 		ub.logger.Error("failed to send message",
 			zap.String("userID", userID),
-			zap.Int("chatID", chatID),
+			zap.Int64("chatID", chatID),
 			zap.Error(err),
 		)
 	}
 }
 
-func (ub *UndercastBot) notifyStatusChanged(ctx context.Context, userID string, chatID int, changes []service.EpisodeStatusChange) {
+func (ub *UndercastBot) notifyStatusChanged(ctx context.Context, userID string, chatID int64, changes []service.EpisodeStatusChange) {
 	for _, change := range changes {
 		ub.sendTextMessage(ctx, chatID, "Episode #%s (%s) is now %s", change.Episode.ID, change.Episode.Title, change.NewStatus)
 	}

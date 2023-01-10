@@ -19,7 +19,7 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	}
 
 	zapFields := []zap.Field{
-		zap.Int("chatID", update.Message.Chat.ID),
+		zap.Int64("chatID", update.Message.Chat.ID),
 		zap.String("messageText", update.Message.Text),
 		zap.String("userID", userID),
 	}

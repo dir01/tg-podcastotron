@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.27.11
 	github.com/docker/go-connections v0.4.0
 	github.com/go-redis/redis v6.15.9+incompatible
-	github.com/go-telegram/bot v0.3.2
+	github.com/go-telegram/bot v0.3.4
 	github.com/google/uuid v1.3.0
 	github.com/hori-ryota/zaperr v0.0.0-20210301022522-bfd0551d7f64
 	github.com/jbub/podcasts v0.2.0
@@ -21,7 +21,7 @@ require (
 	golang.org/x/exp v0.0.0-20221006183845-316c7553db56
 )
 
-replace github.com/go-telegram/bot => github.com/dir01/bot v0.0.0-20221224210533-2d3fa4024dc0
+replace github.com/go-telegram/bot => github.com/dir01/bot v0.0.0-20230110225844-96950c31b9d0
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
