@@ -60,9 +60,17 @@ func (ub *UndercastBot) renderFeed(f *service.Feed, episodesMap map[string]*serv
 	}
 	renderedEpisodes := strings.Join(renderedEpisodesBits, "\n")
 
-	return fmt.Sprintf(`Feed #<code>%s</code>
-<b>%s</b>
+	msgBits := []string{
+		fmt.Sprintf(`Feed #<code>%s</code>`, f.ID),
+		fmt.Sprintf(`<b>%s</b>`, f.Title),
+		"",
+	}
+	if len(f.EpisodeIDs) > 0 {
+		msgBits = append(msgBits, fmt.Sprintf(`Episodes: %d`, len(f.EpisodeIDs)))
+		msgBits = append(msgBits, renderedEpisodes)
+	} else {
+		msgBits = append(msgBits, "No episodes yet")
+	}
 
-Episodes (%d):
-%s`, f.ID, f.Title, len(f.EpisodeIDs), renderedEpisodes)
+	return strings.Join(msgBits, "\n")
 }
