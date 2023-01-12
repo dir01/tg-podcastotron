@@ -48,8 +48,8 @@ type TreeMultiSelect struct {
 	formatUpBtn          func(node *TreeNode) string
 	onError              OnErrorHandler
 	filterButtons        []FilterButton
-	actionButtons        []ActionButton
-	dynamicActionButtons func([]*TreeNode) []ActionButton
+	actionButtons        [][]ActionButton
+	dynamicActionButtons func([]*TreeNode) [][]ActionButton
 	dynamicFilterButtons func([]*TreeNode) []FilterButton
 	separator            string
 
@@ -89,9 +89,9 @@ func New(b *bot.Bot, paths []string, onConfirmSelection OnConfirmSelectionHandle
 		filterButtons:        []FilterButton{FilterButtonSelectAll, FilterButtonSelectNone},
 		dynamicFilterButtons: nil,
 
-		actionButtons: []ActionButton{
-			NewCancelButton("Cancel", defaultOnCancel),
-			NewConfirmButton("Confirm", onConfirmSelection),
+		actionButtons: [][]ActionButton{
+			{NewCancelButton("Cancel", defaultOnCancel)},
+			{NewConfirmButton("Confirm", onConfirmSelection)},
 		},
 		dynamicActionButtons: nil,
 

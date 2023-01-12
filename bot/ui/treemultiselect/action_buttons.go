@@ -36,22 +36,38 @@ func NewConfirmButton(text string, fn OnConfirmSelectionHandler) ActionButton {
 	}
 }
 
-func (tms *TreeMultiSelect) buildActionsRow() []models.InlineKeyboardButton {
+func (tms *TreeMultiSelect) buildActionRows() [][]models.InlineKeyboardButton {
 	if len(tms.actionButtons) == 0 {
 		return nil
 	}
-	var actionBtns []models.InlineKeyboardButton
-	for idx, action := range tms.actionButtons {
-		actionBtns = append(actionBtns, models.InlineKeyboardButton{
-			Text:         action.Text,
-			CallbackData: tms.encodeState(state{cmd: cmdAction, param: idx}),
-		})
+	var actionBtns [][]models.InlineKeyboardButton
+	i := 0
+	for _, actionRow := range tms.actionButtons {
+		keyboardRow := make([]models.InlineKeyboardButton, 0, len(actionRow))
+		for _, action := range actionRow {
+			keyboardRow = append(keyboardRow, models.InlineKeyboardButton{
+				Text:         action.Text,
+				CallbackData: tms.encodeState(state{cmd: cmdAction, param: i}),
+			})
+			i++
+		}
+		actionBtns = append(actionBtns, keyboardRow)
 	}
 	return actionBtns
 }
 
 func (tms *TreeMultiSelect) onAction(ctx context.Context, b *bot.Bot, update *models.Update, idx int) {
-	action := tms.actionButtons[idx]
+	var action ActionButton
+outerLoop:
+	for _, actionRow := range tms.actionButtons {
+		for _, action = range actionRow {
+			if idx == 0 {
+				break outerLoop
+			}
+			idx--
+		}
+	}
+
 	switch action.Type {
 	case actionTypeCancel:
 		action.FnCancel(ctx, b, update.CallbackQuery.Message)

@@ -17,8 +17,8 @@ func (tms *TreeMultiSelect) buildKeyboard() [][]models.InlineKeyboardButton {
 		data = append(data, paginationButtons)
 	}
 
-	if actionButtons := tms.buildActionsRow(); actionButtons != nil {
-		data = append(data, actionButtons)
+	if actionButtons := tms.buildActionRows(); actionButtons != nil {
+		data = append(data, actionButtons...)
 	}
 
 	return data

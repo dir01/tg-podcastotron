@@ -29,17 +29,17 @@ func WithDynamicFilterButtons(fn func(node []*TreeNode) []FilterButton) Option {
 	}
 }
 
-func WithActionButtons(buttons ...ActionButton) Option {
+func WithActionButtons(buttons [][]ActionButton) Option {
 	return func(tms *TreeMultiSelect) {
 		tms.actionButtons = buttons
 	}
 }
 
-func WithDynamicActionButtons(fn func(selectedNodes []*TreeNode) []ActionButton) Option {
+func WithDynamicActionButtons(fn func(selectedNodes []*TreeNode) [][]ActionButton) Option {
 	return func(tms *TreeMultiSelect) {
 		tms.dynamicActionButtons = fn
 		initialButtons := fn([]*TreeNode{})
-		WithActionButtons(initialButtons...)
+		WithActionButtons(initialButtons)
 	}
 }
 

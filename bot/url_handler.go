@@ -68,25 +68,25 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 			}
 			return buttons
 		}),
-		treemultiselect.WithDynamicActionButtons(func(selectedNodes []*treemultiselect.TreeNode) []treemultiselect.ActionButton {
+		treemultiselect.WithDynamicActionButtons(func(selectedNodes []*treemultiselect.TreeNode) [][]treemultiselect.ActionButton {
 			cancelBtn := treemultiselect.NewCancelButton("Cancel", func(ctx context.Context, bot *bot.Bot, mes *models.Message) {})
 
 			switch len(selectedNodes) {
 			case 0:
-				return []treemultiselect.ActionButton{cancelBtn}
+				return [][]treemultiselect.ActionButton{{cancelBtn}}
 			case 1:
-				return []treemultiselect.ActionButton{
-					treemultiselect.NewConfirmButton(
+				return [][]treemultiselect.ActionButton{
+					{treemultiselect.NewConfirmButton(
 						"Create Episode",
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 							ub.createEpisodes(ctx, url, [][]string{{paths[0]}}, mes.Chat.ID, ub.extractUsername(update))
 						},
-					),
-					cancelBtn,
+					)},
+					{cancelBtn},
 				}
 			default:
-				return []treemultiselect.ActionButton{
-					treemultiselect.NewConfirmButton(
+				return [][]treemultiselect.ActionButton{
+					{treemultiselect.NewConfirmButton(
 						"1 File - 1 Episode",
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 							episodesPaths := make([][]string, len(paths))
@@ -95,14 +95,14 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 							}
 							ub.createEpisodes(ctx, url, episodesPaths, mes.Chat.ID, ub.extractUsername(update))
 						},
-					),
-					treemultiselect.NewConfirmButton(
+					)},
+					{treemultiselect.NewConfirmButton(
 						fmt.Sprintf("%d Files - 1 Episode", len(selectedNodes)),
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 							ub.createEpisodes(ctx, url, [][]string{paths}, mes.Chat.ID, ub.extractUsername(update))
 						},
-					),
-					cancelBtn,
+					)},
+					{cancelBtn},
 				}
 			}
 		}),
