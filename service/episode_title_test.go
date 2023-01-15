@@ -28,6 +28,18 @@ func TestGenerateEpisodeTitle(t *testing.T) {
 			},
 			expectedTitle: "Other Directory - 03",
 		},
+		{
+			filepaths:     []string{"x-01.mp3"},
+			expectedTitle: "x-01",
+		},
+		{
+			filepaths:     []string{"Some Title - 01.mp3", "Some Title - 02.mp3"},
+			expectedTitle: "Some Title",
+		},
+		{
+			filepaths:     []string{},
+			expectedTitle: "",
+		},
 	}
 	for _, test := range tests {
 		title := generateEpisodeTitle(test.filepaths)
