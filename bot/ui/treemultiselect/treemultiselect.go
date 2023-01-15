@@ -130,6 +130,9 @@ func (tms *TreeMultiSelect) getAllSelectedNodes() []*TreeNode {
 		}
 		nodes = append(nodes, node)
 	}
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].ID < nodes[j].ID
+	})
 	return nodes
 }
 
