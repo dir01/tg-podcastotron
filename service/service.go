@@ -360,6 +360,7 @@ func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitle
 		return zaperr.Wrap(err, "failed to get episodes", zapFields...)
 	}
 
+	feedsToUpdate := map[string]bool{}
 	for _, ep := range episodesMap {
 		newTitle := getUpdatedEpisodeTitle(ep.Title, newTitlePattern)
 		if newTitle != ep.Title {
@@ -367,6 +368,18 @@ func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitle
 			if _, err := svc.repository.SaveEpisode(ctx, ep); err != nil { // TODO: batch save
 				return zaperr.Wrap(err, "failed to save episode", zapFields...)
 			}
+			for _, feedID := range ep.FeedIDs {
+				feedsToUpdate[feedID] = true
+			}
+		}
+	}
+
+	if len(feedsToUpdate) > 0 {
+		if err = svc.jobsQueue.Publish(ctx, regenerateFeed, RegenerateFeedQueuePayload{
+			UserID:  userID,
+			FeedIDs: maps.Keys(feedsToUpdate),
+		}); err != nil {
+			return zaperr.Wrap(err, "failed to publish regenerate feed job", zapFields...)
 		}
 	}
 
