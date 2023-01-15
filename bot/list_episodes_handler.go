@@ -77,23 +77,18 @@ func (ub *UndercastBot) renderEpisodeFull(ep *service.Episode, feedMap map[strin
 <code>%s</code>
 
 <b>Files:</b>
-<code>- %s</code>
+<code>%s</code>
 
 Published to feeds:
 %s`,
 		ep.ID,
 		ep.Title,
 		ep.SourceURL,
-		strings.Join(ep.SourceFilepaths, "\n- "),
+		strings.Join(ep.SourceFilepaths, ", "),
 		feedsDescription,
 	)
 }
 
-func (ub *UndercastBot) renderEpisodeShort(ep *service.Episode, feedMap map[string]*service.Feed) string {
-	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b>
-<code>- %s</code>`,
-		ep.ID,
-		ep.Title,
-		strings.Join(ep.SourceFilepaths, "\n- "),
-	)
+func (ub *UndercastBot) renderEpisodeShort(ep *service.Episode) string {
+	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b>`, ep.ID, ep.Title)
 }

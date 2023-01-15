@@ -15,6 +15,10 @@ import (
 )
 
 func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {
+	if update == nil || update.Message == nil {
+		ub.logger.Error("urlHandler: update or update.Message is nil")
+		return
+	}
 	zapFields := []zap.Field{
 		zap.Int64("chatID", update.Message.Chat.ID),
 		zap.String("messageText", update.Message.Text),

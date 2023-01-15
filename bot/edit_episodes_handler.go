@@ -80,20 +80,20 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 
 		switch st {
 		case cmdRename:
-			if msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+			if renamePromptMsg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 				ChatID:      chatID,
 				Text:        "Please enter new name for the episodes",
 				ParseMode:   models.ParseModeHTML,
 				ReplyMarkup: &models.ForceReply{ForceReply: true},
 			}); err != nil {
-				zapFields = append(zapFields, zap.Any("message", msg))
+				zapFields = append(zapFields, zap.Any("message", renamePromptMsg))
 				ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zapFields...))
 				return
 			} else {
 				ub.bot.RegisterHandlerMatchFunc(
 					bot.HandlerTypeMessageText,
 					func(update *models.Update) bool {
-						return update.Message.ReplyToMessage != nil && update.Message.ReplyToMessage.ID == msg.ID
+						return update.Message.ReplyToMessage != nil && update.Message.ReplyToMessage.ID == renamePromptMsg.ID
 					},
 					func(ctx context.Context, b *bot.Bot, update *models.Update) {
 						newTitlePattern := update.Message.Text
@@ -102,7 +102,11 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 							return
 						}
 
-						msgTextParts := []string{fmt.Sprintf("%d episodes were renames", len(epIDs))}
+						if _, err = ub.bot.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: renamePromptMsg.ID}); err != nil {
+							ub.logger.Error("failed to delete rename prompt message", append([]zap.Field{zap.Error(err)}, zapFields...)...)
+						}
+
+						msgTextParts := []string{fmt.Sprintf("%d episodes were renamed", len(epIDs))}
 						newEpisodesMap, err := ub.service.GetEpisodesMap(ctx, epIDs, userID)
 						if err == nil {
 							for _, epID := range epIDs {
@@ -111,16 +115,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 								msgTextParts = append(msgTextParts, fmt.Sprintf("%s -> %s", oldEp.Title, newEp.Title))
 							}
 						}
-						_, _ = ub.bot.EditMessageText(ctx, &bot.EditMessageTextParams{
-							ChatID:    chatID,
-							MessageID: msg.ID,
-							Text:      strings.Join(msgTextParts, "\n"),
-						})
-						_, _ = ub.bot.EditMessageReplyMarkup(ctx, &bot.EditMessageReplyMarkupParams{
-							ChatID:      chatID,
-							MessageID:   msg.ID,
-							ReplyMarkup: &models.InlineKeyboardMarkup{},
-						})
+						ub.sendTextMessage(ctx, chatID, strings.Join(msgTextParts, "\n"))
 					})
 			}
 		case cmdDelete:
@@ -128,6 +123,14 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to delete episodes", zapFields...))
 				return
 			}
+
+			replyText := fmt.Sprintf("%d episodes were deleted", len(epIDs))
+			if ids, err := formatIDsCompactly(epIDs); err != nil {
+				ub.logger.Error("error", zap.Error(zaperr.Wrap(err, "failed to format episode IDs", zapFields...)))
+			} else {
+				replyText = fmt.Sprintf("Episodes %s were deleted", ids)
+			}
+			ub.sendTextMessage(ctx, chatID, replyText)
 		}
 	})
 
@@ -165,7 +168,7 @@ func (ub *UndercastBot) formatInitialMessage(epIDs []string, episodesMap map[str
 		if ep == nil {
 			return "", zaperr.New("episode not found")
 		}
-		initialMessageParts = append(initialMessageParts, ub.renderEpisodeShort(ep, feedMap)) // TODO: split into multiple messages if too long
+		initialMessageParts = append(initialMessageParts, ub.renderEpisodeShort(ep)) // TODO: split into multiple messages if too long
 	}
 	initialMessageParts = append(initialMessageParts, editEpisodesHelp)
 	initialMessageText := strings.Join(initialMessageParts, "\n\n")

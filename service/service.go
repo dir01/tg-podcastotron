@@ -79,7 +79,8 @@ var (
 		1 * time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second,
 		40 * time.Second, 60 * time.Second, 120 * time.Second, 240 * time.Second,
 	}
-	ErrFeedNotFound = fmt.Errorf("feed not found")
+	ErrFeedNotFound    = fmt.Errorf("feed not found")
+	ErrEpisodeNotFound = fmt.Errorf("episode not found")
 )
 
 func New(mediaSvc mediary.Service, repository *Repository, s3Store S3Store, jobsQueue *jobsqueue.RedisJobQueue, logger *zap.Logger) *Service {
@@ -203,7 +204,7 @@ func (svc *Service) GetEpisodesMap(ctx context.Context, ids []string, userID str
 	if episodes, err := svc.repository.GetEpisodesMap(ctx, ids, userID); err == nil {
 		return episodes, nil
 	} else {
-		return nil, zaperr.Wrap(err, "failed to get episodes map", zap.Strings("ids", ids))
+		return nil, zaperr.Wrap(ErrEpisodeNotFound, "failed to get episodes map", zap.Strings("ids", ids), zap.Error(err))
 	}
 }
 
@@ -378,9 +379,9 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID s
 		zap.String("userID", userID),
 	}
 
-	episodesMap, err := svc.repository.GetEpisodesMap(ctx, epIDs, userID)
+	episodesMap, err := svc.GetEpisodesMap(ctx, epIDs, userID)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get episodes", zapFields...)
+		return err
 	}
 
 	feedIDsMap := make(map[string]bool, len(episodesMap)*2)
