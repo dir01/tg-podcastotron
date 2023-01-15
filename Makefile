@@ -7,5 +7,8 @@ run: docker-compose-up
 test:
 	go test -v ./...
 
+generate:
+	go generate ./...
+
 docker-compose-up:
 	docker-compose up -d
