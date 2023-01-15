@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -27,7 +28,7 @@ func (store *s3Store) PreSignedURL(key string) (string, error) {
 		Bucket: aws.String(store.bucketName),
 		Key:    aws.String(key),
 		//StorageClass: types.StorageClassReducedRedundancy,
-	})
+	}, s3.WithPresignExpires(48*time.Hour))
 	if err != nil {
 		return "", fmt.Errorf("failed to presign upload: %w", err)
 	}
@@ -35,12 +36,31 @@ func (store *s3Store) PreSignedURL(key string) (string, error) {
 	return presignURL, nil
 }
 
-func (store *s3Store) Put(ctx context.Context, key string, dataReader io.Reader) error {
-	_, err := store.s3Client.PutObject(ctx, &s3.PutObjectInput{
+type PutOptions struct {
+	ContentType string
+}
+
+func WithContentType(contentType string) func(*PutOptions) {
+	return func(opts *PutOptions) {
+		opts.ContentType = contentType
+	}
+}
+
+func (store *s3Store) Put(ctx context.Context, key string, dataReader io.Reader, opts ...func(*PutOptions)) error {
+	options := &PutOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	putObjectInput := &s3.PutObjectInput{
 		Bucket: aws.String(store.bucketName),
 		Key:    aws.String(key),
 		Body:   dataReader,
-	})
+	}
+	if options.ContentType != "" {
+		putObjectInput.ContentType = aws.String(options.ContentType)
+	}
+	_, err := store.s3Client.PutObject(ctx, putObjectInput)
 	if err != nil {
 		return fmt.Errorf("failed to put object: %w", err)
 	}

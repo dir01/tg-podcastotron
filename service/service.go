@@ -23,7 +23,7 @@ import (
 //go:generate moq -out servicemocks/s3.go -pkg servicemocks -rm . S3Store:MockS3Store
 type S3Store interface {
 	PreSignedURL(key string) (string, error)
-	Put(ctx context.Context, key string, dataReader io.Reader) error
+	Put(ctx context.Context, key string, dataReader io.Reader, opts ...func(*PutOptions)) error
 }
 
 type Service struct {
@@ -682,7 +682,7 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 	}
 	objectKey := strings.TrimPrefix(parsed.Path, "/")
 
-	if err := svc.s3Store.Put(ctx, objectKey, feedReader); err != nil {
+	if err := svc.s3Store.Put(ctx, objectKey, feedReader, WithContentType("text/xml; charset=utf-8")); err != nil {
 		zapFields = append(zapFields, zap.Error(err))
 		return zaperr.Wrap(err, "failed to upload feed", zapFields...)
 	}
