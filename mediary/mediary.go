@@ -77,7 +77,8 @@ const (
 )
 
 func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, error) {
-	fullURL := fmt.Sprintf("%s/metadata?url=%s", svc.baseURL, mediaURL)
+	// TODO: should not depend on metadata endpoint, implement /is_valid in mediary
+	fullURL := fmt.Sprintf("%s/metadata/long-polling?url=%s", svc.baseURL, mediaURL)
 	svc.logger.Debug("checking if URL is valid", zap.String("url", fullURL))
 
 	resp, err := http.Get(fullURL)
