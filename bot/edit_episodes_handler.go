@@ -50,7 +50,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 
 	episodesMap, err := ub.service.GetEpisodesMap(ctx, epIDs, userID)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get episodes", zapFields...))
+		ub.sendTextMessage(ctx, chatID, "At least one of the episodes you are trying to edit does not exist. Please try again with different IDs")
 		return
 	}
 
