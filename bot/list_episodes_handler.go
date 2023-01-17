@@ -2,7 +2,9 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/go-telegram/bot"
@@ -18,16 +20,42 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 		return
 	}
 
+	epID := ub.parseListEpisodesCmd(update.Message.Text)
+
 	zapFields := []zap.Field{
 		zap.Int64("chatID", update.Message.Chat.ID),
 		zap.String("messageText", update.Message.Text),
 		zap.String("userID", userID),
+		zap.String("episodeID", epID),
 	}
 
-	episodes, err := ub.service.ListEpisodes(ctx, userID)
-	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
-		return
+	var err error
+	var episodes []*service.Episode
+	feedMap := map[string]*service.Feed{}
+	if epID == "" {
+		if episodes, err = ub.service.ListEpisodes(ctx, userID); err != nil {
+			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
+			return
+		}
+	} else {
+		if epMap, err := ub.service.GetEpisodesMap(ctx, []string{epID}, userID); err != nil {
+			if errors.Is(err, service.ErrEpisodeNotFound) {
+				ub.sendTextMessage(ctx, update.Message.Chat.ID, "Episode %s not found", epID)
+				return
+			}
+			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to get episodes", zapFields...))
+			return
+		} else {
+			episodes = append(episodes, epMap[epID])
+			if feeds, err := ub.service.ListFeeds(ctx, userID); err != nil {
+				ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
+				return
+			} else {
+				for _, f := range feeds {
+					feedMap[f.ID] = f
+				}
+			}
+		}
 	}
 
 	if len(episodes) == 0 {
@@ -40,19 +68,13 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 		return
 	}
 
-	feeds, err := ub.service.ListFeeds(ctx, userID)
-	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
-		return
-	}
-
-	feedMap := map[string]*service.Feed{}
-	for _, f := range feeds {
-		feedMap[f.ID] = f
-	}
-
 	for _, ep := range episodes {
-		text := ub.renderEpisodeFull(ep, feedMap)
+		var text string
+		if epID == "" {
+			text = ub.renderEpisodeShort(ep)
+		} else {
+			text = ub.renderEpisodeFull(ep, feedMap)
+		}
 		if msg, err := b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID:    update.Message.Chat.ID,
 			ParseMode: models.ParseModeHTML,
@@ -64,10 +86,19 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	}
 }
 
+func (ub *UndercastBot) parseListEpisodesCmd(text string) (epID string) {
+	re := regexp.MustCompile(`/ep_(\d+)`)
+	matches := re.FindStringSubmatch(text)
+	if len(matches) != 2 {
+		return ""
+	}
+	return matches[1]
+}
+
 func (ub *UndercastBot) renderEpisodeFull(ep *service.Episode, feedMap map[string]*service.Feed) string {
 	var feedsDescriptionBits []string
 	for _, f := range ep.FeedIDs {
-		feedsDescriptionBits = append(feedsDescriptionBits, fmt.Sprintf("- %s (%s)", feedMap[f].ID, feedMap[f].Title))
+		feedsDescriptionBits = append(feedsDescriptionBits, fmt.Sprintf("- <code>%s</code> (%s)", feedMap[f].ID, feedMap[f].Title))
 	}
 	feedsDescription := strings.Join(feedsDescriptionBits, "\n")
 
@@ -77,9 +108,9 @@ func (ub *UndercastBot) renderEpisodeFull(ep *service.Episode, feedMap map[strin
 <code>%s</code>
 
 <b>Files:</b>
-<code>%s</code>
+<pre>%s</pre>
 
-Published to feeds:
+<b>Published to feeds:</b>
 %s`,
 		ep.ID,
 		ep.Title,
@@ -90,5 +121,5 @@ Published to feeds:
 }
 
 func (ub *UndercastBot) renderEpisodeShort(ep *service.Episode) string {
-	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b>`, ep.ID, ep.Title)
+	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b> [info: /ep_%s] [edit: /ee_%s]`, ep.ID, ep.Title, ep.ID, ep.ID)
 }

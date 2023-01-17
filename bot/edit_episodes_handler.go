@@ -15,14 +15,14 @@ import (
 
 const editEpisodesHelp = `
 <b>Edit episodes:</b>
-<code>/editEpisodes_&lt;episode_id&gt;_to_&lt;episode_id&gt;</code>
+<code>/ee_&lt;episode_id&gt;</code>
 or
-<code>/editEpisodes_&lt;episode_id&gt;</code>
+<code>/ee_&lt;episode_id&gt;_to_&lt;episode_id&gt;</code>
 
 <b>Possible actions:</b>
 - <code>Rename Episodes</code> - renames all episodes. 
-If episodes contain a number, you can use <code>%%n</code> to insert the number in the new name
-<i>Example: given episodes "Episode 1", "Episode 2", "Episode 3", renaming to "My Fairy Tale - Chapter %%n" will result in "My Fairy Tale - Chapter 1", "My Fairy Tale - Chapter 2", "My Fairy Tale - Chapter 3"</i>
+If episodes contain a number, you can use <code>%n</code> to insert the number in the new name
+<i>Example: given episodes "Episode 1", "Episode 2", "Episode 3", renaming to "My Fairy Tale - Chapter %n" will result in "My Fairy Tale - Chapter 1", "My Fairy Tale - Chapter 2", "My Fairy Tale - Chapter 3"</i>
 (if episodes contain multiple numbers, the last one will be considered the episode number)
 
 - <code>Manage Episodes Feeds</code> - allows you to add or remove episodes from feeds. Episodes can be added to multiple feeds
@@ -42,7 +42,13 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 
 	epIDs, err := ub.parseEditEpisodesCmd(update.Message.Text)
 	if err != nil {
-		ub.sendTextMessage(ctx, chatID, editEpisodesHelp)
+		if _, err2 := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:    chatID,
+			Text:      editEpisodesHelp,
+			ParseMode: models.ParseModeHTML,
+		}); err2 != nil {
+			ub.logger.Error("sendTextMessage error", append([]zap.Field{zap.Error(err2)}, zapFields...)...)
+		}
 		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to parse /editEpisodes command", zapFields...))
 		return
 	}
@@ -184,7 +190,7 @@ func (ub *UndercastBot) formatInitialMessage(epIDs []string, episodesMap map[str
 }
 
 func (ub *UndercastBot) parseEditEpisodesCmd(text string) (epIDs []string, err error) {
-	re, err := regexp.Compile(`/editEpisodes_(.*)`)
+	re, err := regexp.Compile(`/ee_(.*)`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile regexp: %w", err)
 	}

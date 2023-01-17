@@ -11,26 +11,28 @@ import (
 const helpMessage = `
 This bot allows you to create podcasts from torrent magnet links.
 
-You just send it a link, choose files, choose if you want them glued together,
-or published as separate episodes, and undercast will download the torrent,
-convert the files, and publish them to your podcast.
+<b>You just send it a link, choose files, and it will be published to your podcast feed</b>
+Subscribe to it and listen away!
 
-You have a default podcast feed, but you can create as many as you want:
+Bot will try to figure episode title to the best of its ability,
+but you can always edit episodes later: change title 
+or which podcast feeds they are published to, like so:
 
-<code>/feeds</code> command will list all your podcasts, and 
+/ee_1- edit episode 1
+/ee_1_to_10 - edit episodes 1 to 10
 
-<code>/addFeed</code> will create a new podcast
+If you wonder where do you get episode IDs from, just run
+/ep - list all your episodes
 
-New episodes will be published your default podcast feed,
-and bot will try to figure a title for them to the best of its ability,
-but you can always edit them later: change title 
-or which podcast feeds they are published to, like so
+If you ever need more info about some episode, just run
+/ep_1 - get more info about episode 1
 
-<code>/editEpisodes_12_to_28</code> - edit episodes 12-28
+If you want to have more than one podcast feed,
+/nf will create a new podcast feed;
+/ef_1 will edit podcast feed with ID 1;
+/f will list all your podcast feeds;
 
-<code>/episodes</code> will list all your episodes
-
-<code>/start</code> or <code>/help</code> will render this message
+/start or /help will render this message
 `
 
 func (ub *UndercastBot) helpHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {

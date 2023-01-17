@@ -59,13 +59,11 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, ub.helpHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, ub.helpHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/episodes", bot.MatchTypeExact, ub.listEpisodesHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/editEpisodes", bot.MatchTypePrefix, ub.editEpisodesHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/feeds", bot.MatchTypeExact, ub.feedsHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/addFeed", bot.MatchTypeExact, ub.addFeedHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/unpublish_ep", bot.MatchTypePrefix, ub.unpublishEpisodesHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/publish_ep", bot.MatchTypePrefix, ub.publishEpisodesHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/playground", bot.MatchTypeExact, ub.playgroundHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ep", bot.MatchTypePrefix, ub.listEpisodesHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ee", bot.MatchTypePrefix, ub.editEpisodesHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/f", bot.MatchTypePrefix, ub.listFeedsHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ef", bot.MatchTypePrefix, ub.editFeedsHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/nf", bot.MatchTypeExact, ub.newFeedHandler)
 	ub.bot.Start(ctx)
 
 	return nil

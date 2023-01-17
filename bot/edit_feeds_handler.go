@@ -7,6 +7,6 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
-func (ub *UndercastBot) newFeedHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 }

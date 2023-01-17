@@ -1,8 +1,10 @@
 build:
 	go build -o ./bin/bot ./cmd/bot
 
-run: docker-compose-up
+run-server:
 	go run ./cmd/bot
+
+run_all: docker-compose-up run-server
 
 test:
 	go test -v ./...
