@@ -15,19 +15,14 @@ import (
 
 const editEpisodesHelp = `
 <b>Edit episodes:</b>
-<code>/ee_&lt;episode_id&gt;</code>
+<code>/ee_</code>&lt;episode_id&gt;
 or
-<code>/ee_&lt;episode_id&gt;_to_&lt;episode_id&gt;</code>
+<code>/ee_</code>&lt;episode_id&gt;_to_&lt;episode_id&gt;
 
 <b>Possible actions:</b>
-- <code>Rename Episodes</code> - renames all episodes. 
-If episodes contain a number, you can use <code>%n</code> to insert the number in the new name
-<i>Example: given episodes "Episode 1", "Episode 2", "Episode 3", renaming to "My Fairy Tale - Chapter %n" will result in "My Fairy Tale - Chapter 1", "My Fairy Tale - Chapter 2", "My Fairy Tale - Chapter 3"</i>
-(if episodes contain multiple numbers, the last one will be considered the episode number)
-
-- <code>Manage Episodes Feeds</code> - allows you to add or remove episodes from feeds. Episodes can be added to multiple feeds
-
-- <code>Delete Episodes</code> - delete episodes from your library, remove them from feeds and delete their files from disk
+- <b>Rename Episodes</b> - rename episodes. Use <code>%n</code> as placeholder for number as extracted from original name
+- <b>Manage Episodes Feeds</b> - add or remove episodes from feeds
+- <b>Delete Episodes</b> - delete episodes from your library, remove them from feeds and delete their files from disk
 `
 
 func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -40,16 +35,15 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 		zap.String("username", userID),
 	}
 
-	epIDs, err := ub.parseEditEpisodesCmd(update.Message.Text)
-	if err != nil {
-		if _, err2 := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+	epIDs := ub.parseEditEpisodesCmd(update.Message.Text)
+	if epIDs == nil {
+		if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID:    chatID,
 			Text:      editEpisodesHelp,
 			ParseMode: models.ParseModeHTML,
-		}); err2 != nil {
-			ub.logger.Error("sendTextMessage error", append([]zap.Field{zap.Error(err2)}, zapFields...)...)
+		}); err != nil {
+			ub.logger.Error("sendTextMessage error", append([]zap.Field{zap.Error(err)}, zapFields...)...)
 		}
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to parse /editEpisodes command", zapFields...))
 		return
 	}
 	zapFields = append(zapFields, zap.Strings("episodeIDs", epIDs))
@@ -189,21 +183,16 @@ func (ub *UndercastBot) formatInitialMessage(epIDs []string, episodesMap map[str
 	return initialMessageText, nil
 }
 
-func (ub *UndercastBot) parseEditEpisodesCmd(text string) (epIDs []string, err error) {
-	re, err := regexp.Compile(`/ee_(.*)`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compile regexp: %w", err)
-	}
-
+func (ub *UndercastBot) parseEditEpisodesCmd(text string) (epIDs []string) {
+	re := regexp.MustCompile(`/ee_(.*)`)
 	matches := re.FindStringSubmatch(text)
 	if len(matches) != 2 {
-		return nil, fmt.Errorf(`failed to extract episode ids from the message '%s'`, text)
+		return nil
 	}
 
-	epIDs, err = parseIDs(matches[1])
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse episode ids: %w", err)
+	if epIDs, err := parseIDs(matches[1]); err != nil {
+		return nil
+	} else {
+		return epIDs
 	}
-
-	return epIDs, nil
 }
