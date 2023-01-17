@@ -37,12 +37,18 @@ func generateEpisodeTitle(filepaths []string) string {
 	}
 	return path.Base(prefix)
 
-	// If there are multiple files in the root, use the longest prefix as a title
+	// If there are multiple files in the root, use the longest prefix or longest suffix as a title
 flatFiles:
-	prefix = longestCommonPrefix(filepaths)
-	// account for numbering, e.g. "foo - 01", "foo - 02" -> "foo", not "foo - 0"
-	prefix = regexp.MustCompile(`[\d\s_-]+$`).ReplaceAllString(prefix, "")
-	return prefix
+	prefix, suffix := longestCommonPrefixAndSuffix(filepaths)
+	if prefix > suffix {
+		// account for numbering, e.g. "foo - 01", "foo - 02" -> "foo", not "foo - 0"
+		prefix = regexp.MustCompile(`[\d\s_-]+$`).ReplaceAllString(prefix, "")
+		return prefix
+	} else {
+		suffix = strings.Replace(suffix, path.Ext(suffix), "", 1)
+		suffix = strings.Trim(suffix, "_ -")
+		return suffix
+	}
 }
 
 func getUpdatedEpisodeTitle(oldTitle string, newTitlePattern string) (newTitle string) {
@@ -57,11 +63,9 @@ func getUpdatedEpisodeTitle(oldTitle string, newTitlePattern string) (newTitle s
 	return strings.Replace(newTitlePattern, "%n", matches[1], 1)
 }
 
-func longestCommonPrefix(strs []string) string {
-	longestPrefix := ""
-
+func longestCommonPrefixAndSuffix(strs []string) (longestPrefix string, longestSuffix string) {
 	if len(strs) < 2 {
-		return longestPrefix
+		return longestPrefix, longestSuffix
 	}
 
 	sort.Strings(strs)
@@ -75,5 +79,14 @@ func longestCommonPrefix(strs []string) string {
 			break
 		}
 	}
-	return longestPrefix
+
+	for i := len(first) - 1; i >= 0; i-- {
+		if string(last[i]) == string(first[i]) {
+			longestSuffix = string(last[i]) + longestSuffix
+		} else {
+			break
+		}
+	}
+
+	return longestPrefix, longestSuffix
 }

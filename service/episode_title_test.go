@@ -29,6 +29,14 @@ func TestGenerateEpisodeTitle(t *testing.T) {
 			expectedTitle: "Other Directory - 03",
 		},
 		{
+			filepaths: []string{
+				"01_Some title.mp3",
+				"02_Some title.mp3",
+				"03_Some title.mp3",
+			},
+			expectedTitle: "Some title",
+		},
+		{
 			filepaths:     []string{"x-01.mp3"},
 			expectedTitle: "x-01",
 		},
