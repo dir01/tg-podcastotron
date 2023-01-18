@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
@@ -64,6 +65,10 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/f", bot.MatchTypePrefix, ub.listFeedsHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ef", bot.MatchTypePrefix, ub.editFeedsHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/nf", bot.MatchTypeExact, ub.newFeedHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/adduser", bot.MatchTypeExact, ub.addUserHandler)
+	ub.bot.RegisterHandlerMatchFunc(bot.HandlerTypeMessageText, func(update *models.Update) bool {
+		return update != nil && update.Message != nil && update.Message.Contact != nil
+	}, ub.addUserHandler)
 	ub.bot.Start(ctx)
 
 	return nil

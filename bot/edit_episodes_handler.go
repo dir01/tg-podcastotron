@@ -26,13 +26,14 @@ or
 `
 
 func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	userID := ub.extractUsername(update)
-	chatID := update.Message.Chat.ID
+	userID := ub.extractUserID(update)
+	chatID := ub.extractChatID(update)
 
 	zapFields := []zap.Field{
 		zap.Int64("chatID", chatID),
 		zap.String("messageText", update.Message.Text),
-		zap.String("username", userID),
+		zap.String("userID", userID),
+		zap.String("username", ub.extractUsername(update)),
 	}
 
 	epIDs := ub.parseEditEpisodesCmd(update.Message.Text)
@@ -87,7 +88,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 				ReplyMarkup: &models.ForceReply{ForceReply: true},
 			}); err != nil {
 				zapFields = append(zapFields, zap.Any("message", renamePromptMsg))
-				ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zapFields...))
+				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
 				return
 			} else {
 				ub.bot.RegisterHandlerMatchFunc(

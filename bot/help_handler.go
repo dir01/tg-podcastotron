@@ -37,7 +37,7 @@ If you want to have more than one podcast feed,
 
 func (ub *UndercastBot) helpHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {
 	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:    update.Message.Chat.ID,
+		ChatID:    ub.extractChatID(update),
 		Text:      helpMessage,
 		ParseMode: models.ParseModeHTML,
 	}); err != nil {

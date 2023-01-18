@@ -94,10 +94,11 @@ func main() {
 	mediaryService := mediary.New(mediaryURL, logger)
 	svcRepo := service.NewRepository(redisClient, "undercast:service")
 	s3Store := service.NewS3Store(s3Client, awsBucketName)
-	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, logger)
+	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, "foo", logger)
 
 	botStore := bot.NewRedisStore(redisClient, "undercast:bot")
-	botAuthService := auth.New(adminUsername)
+	authRepo := auth.NewRepository(redisClient, "undercast:auth")
+	botAuthService := auth.New(adminUsername, authRepo, logger)
 	ubot := bot.NewUndercastBot(botToken, botAuthService, botStore, svc, logger)
 	if err := ubot.Start(ctx); err != nil {
 		logger.Fatal("error starting bot", zap.Error(err))

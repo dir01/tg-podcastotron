@@ -14,23 +14,25 @@ import (
 )
 
 func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	userID := ub.extractUsername(update)
-	if userID == "" {
+	userID := ub.extractUserID(update)
+	chatID := update.Message.Chat.ID
+	if userID == "" || chatID == 0 {
 		return
 	}
 
 	feedID := ub.parseListFeedsCmd(update.Message.Text)
 
 	zapFields := []zap.Field{
-		zap.Int64("chatID", update.Message.Chat.ID),
+		zap.Int64("chatID", chatID),
 		zap.String("messageText", update.Message.Text),
 		zap.String("userID", userID),
+		zap.String("username", ub.extractUsername(update)),
 		zap.String("feedID", feedID),
 	}
 
 	feeds, err := ub.service.ListFeeds(ctx, userID)
 	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
+		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
 		return
 	}
 
@@ -43,7 +45,7 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 			}
 		}
 		if feed == nil {
-			ub.sendTextMessage(ctx, update.Message.Chat.ID, "Feed %s not found", feedID)
+			ub.sendTextMessage(ctx, chatID, "Feed %s not found", feedID)
 			return
 		}
 		feeds = []*service.Feed{feed}
@@ -51,7 +53,7 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 
 	episodes, err := ub.service.ListEpisodes(ctx, userID)
 	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
+		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
 		return
 	}
 
@@ -68,11 +70,11 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 			text = ub.renderFeedFull(f, episodesMap)
 		}
 		if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:    update.Message.Chat.ID,
+			ChatID:    chatID,
 			Text:      text,
 			ParseMode: models.ParseModeHTML,
 		}); err != nil {
-			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zapFields...))
+			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
 		}
 	}
 

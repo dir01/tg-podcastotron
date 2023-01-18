@@ -14,19 +14,19 @@ var sentMenusCache = make(map[string]bool) // TODO: cache invalidation
 
 func (ub *UndercastBot) setMenuMiddleware(next bot.HandlerFunc) bot.HandlerFunc {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
-		commands := []models.BotCommand{
-			{"help", "Display bot help"},
-			{"ep", "List all your episodes"},
-			{"f", "List all your podcast feeds"},
-			{"ee", "Edit episode(s)"},
-			{"ef", "Edit feed(s)"},
-			{"nf", "Create new podcast feed"},
-		}
-
 		username := ub.extractUsername(update)
 		if username == "" {
 			next(ctx, b, update)
 			return
+		}
+
+		commands := []models.BotCommand{
+			{Command: "help", Description: "Display bot help"},
+			{Command: "ep", Description: "List all your episodes"},
+			{Command: "f", Description: "List all your podcast feeds"},
+			{Command: "ee", Description: "Edit episode(s)"},
+			{Command: "ef", Description: "Edit feed(s)"},
+			{Command: "nf", Description: "Create new podcast feed"},
 		}
 
 		isAdmin, err := ub.auth.IsAdmin(ctx, username)

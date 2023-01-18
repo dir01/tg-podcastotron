@@ -15,17 +15,19 @@ import (
 )
 
 func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	userID := ub.extractUsername(update)
-	if userID == "" {
+	userID := ub.extractUserID(update)
+	chatID := ub.extractChatID(update)
+	if userID == "" || chatID == 0 {
 		return
 	}
 
 	epID := ub.parseListEpisodesCmd(update.Message.Text)
 
 	zapFields := []zap.Field{
-		zap.Int64("chatID", update.Message.Chat.ID),
+		zap.Int64("chatID", chatID),
 		zap.String("messageText", update.Message.Text),
 		zap.String("userID", userID),
+		zap.String("username", ub.extractUsername(update)),
 		zap.String("episodeID", epID),
 	}
 
@@ -34,21 +36,21 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	feedMap := map[string]*service.Feed{}
 	if epID == "" {
 		if episodes, err = ub.service.ListEpisodes(ctx, userID); err != nil {
-			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
+			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
 			return
 		}
 	} else {
 		if epMap, err := ub.service.GetEpisodesMap(ctx, []string{epID}, userID); err != nil {
 			if errors.Is(err, service.ErrEpisodeNotFound) {
-				ub.sendTextMessage(ctx, update.Message.Chat.ID, "Episode %s not found", epID)
+				ub.sendTextMessage(ctx, chatID, "Episode %s not found", epID)
 				return
 			}
-			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to get episodes", zapFields...))
+			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get episodes", zapFields...))
 			return
 		} else {
 			episodes = append(episodes, epMap[epID])
 			if feeds, err := ub.service.ListFeeds(ctx, userID); err != nil {
-				ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
+				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
 				return
 			} else {
 				for _, f := range feeds {
@@ -60,10 +62,10 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 
 	if len(episodes) == 0 {
 		if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: update.Message.Chat.ID,
+			ChatID: chatID,
 			Text:   "You have no episodes yet",
 		}); err != nil {
-			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zapFields...))
+			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
 		}
 		return
 	}
@@ -76,11 +78,11 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			text = ub.renderEpisodeFull(ep, feedMap)
 		}
 		if msg, err := b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:    update.Message.Chat.ID,
+			ChatID:    chatID,
 			ParseMode: models.ParseModeHTML,
 			Text:      text,
 		}); err != nil {
-			ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zap.Any("message", msg)))
+			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zap.Any("message", msg)))
 			return
 		}
 	}

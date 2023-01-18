@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -9,19 +10,16 @@ import (
 
 func (ub *UndercastBot) authenticate(next bot.HandlerFunc) bot.HandlerFunc {
 	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		chatID := ub.extractChatID(update)
+		userID := ub.extractUserID(update)
 		username := ub.extractUsername(update)
-		if username == "" {
+		if username == "" || userID == "" || chatID == 0 {
 			return
 		}
 
-		chatID := ub.extractChatID(update, username)
-		if chatID == 0 {
-			return
-		}
+		_ = ub.store.SetChatID(ctx, userID, chatID)
 
-		ub.store.SetChatID(ctx, username, chatID)
-
-		if isAuthenticated, err := ub.auth.IsAuthenticated(ctx, username); isAuthenticated && err == nil {
+		if isAuthenticated, err := ub.auth.IsAuthenticated(ctx, userID, username); isAuthenticated && err == nil {
 			next(ctx, b, update)
 			return
 		}
@@ -30,20 +28,35 @@ func (ub *UndercastBot) authenticate(next bot.HandlerFunc) bot.HandlerFunc {
 	}
 }
 
-func (ub *UndercastBot) extractChatID(update *models.Update, username string) int64 {
-	if update.Message != nil {
+func (ub *UndercastBot) extractChatID(update *models.Update) int64 {
+	switch {
+	case update.Message != nil:
 		return update.Message.Chat.ID
-	} else if update.CallbackQuery != nil {
+	case update.CallbackQuery != nil:
 		return update.CallbackQuery.Message.Chat.ID
+	default:
+		return 0
 	}
-	return 0
 }
 
 func (ub *UndercastBot) extractUsername(update *models.Update) string {
-	if update.Message != nil {
+	switch {
+	case update.Message != nil:
 		return update.Message.From.Username
-	} else if update.CallbackQuery != nil {
+	case update.CallbackQuery != nil:
 		return update.CallbackQuery.Sender.Username
+	default:
+		return ""
 	}
-	return ""
+}
+
+func (ub *UndercastBot) extractUserID(update *models.Update) string {
+	switch {
+	case update.Message != nil:
+		return strconv.FormatInt(update.Message.From.ID, 10)
+	case update.CallbackQuery != nil:
+		return strconv.FormatInt(update.CallbackQuery.Sender.ID, 10)
+	default:
+		return ""
+	}
 }

@@ -19,8 +19,14 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 		ub.logger.Error("urlHandler: update or update.Message is nil")
 		return
 	}
+
+	chatID := ub.extractChatID(update)
+	userID := ub.extractUserID(update)
+
 	zapFields := []zap.Field{
-		zap.Int64("chatID", update.Message.Chat.ID),
+		zap.Int64("chatID", chatID),
+		zap.String("userID", userID),
+		zap.String("username", ub.extractUsername(update)),
 		zap.String("messageText", update.Message.Text),
 	}
 
@@ -30,17 +36,17 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 	url := update.Message.Text
 	isValid, err := ub.service.IsValidURL(ctx, url)
 	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to check if URL is valid", zapFields...))
+		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to check if URL is valid", zapFields...))
 		return
 	}
 	if !isValid {
-		ub.sendTextMessage(ctx, update.Message.Chat.ID, "Invalid command or URL")
+		ub.sendTextMessage(ctx, chatID, "Invalid command or URL")
 		return
 	}
 
 	metadata, err := ub.service.FetchMetadata(ctx, url)
 	if err != nil {
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to fetch metadata", zapFields...))
+		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to fetch metadata", zapFields...))
 		return
 	}
 
@@ -83,7 +89,7 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 					{treemultiselect.NewConfirmButton(
 						"Create Episode",
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
-							ub.createEpisodes(ctx, url, [][]string{{paths[0]}}, mes.Chat.ID, ub.extractUsername(update))
+							ub.createEpisodes(ctx, url, [][]string{{paths[0]}}, mes.Chat.ID, userID)
 						},
 					)},
 					{cancelBtn},
@@ -97,13 +103,13 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 							for i, path := range paths {
 								episodesPaths[i] = []string{path}
 							}
-							ub.createEpisodes(ctx, url, episodesPaths, mes.Chat.ID, ub.extractUsername(update))
+							ub.createEpisodes(ctx, url, episodesPaths, mes.Chat.ID, userID)
 						},
 					)},
 					{treemultiselect.NewConfirmButton(
 						fmt.Sprintf("%d Files - 1 Episode", len(selectedNodes)),
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
-							ub.createEpisodes(ctx, url, [][]string{paths}, mes.Chat.ID, ub.extractUsername(update))
+							ub.createEpisodes(ctx, url, [][]string{paths}, mes.Chat.ID, userID)
 						},
 					)},
 					{cancelBtn},
@@ -113,12 +119,12 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 	)
 
 	if msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      update.Message.Chat.ID,
-		Text:        fmt.Sprintf("Please choose which files to include in the episode"),
+		ChatID:      chatID,
+		Text:        "Please choose which files to include in the episode",
 		ReplyMarkup: kb,
 	}); err != nil {
 		zapFields = append(zapFields, zap.Any("message", msg))
-		ub.handleError(ctx, update.Message.Chat.ID, zaperr.Wrap(err, "failed to send message", zapFields...))
+		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
 		return
 	}
 }
@@ -191,7 +197,7 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 	}
 
 	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
+		ChatID:      chatID,
 		Text: fmt.Sprintf(`
 %d episodes are scheduled.
 After they are processed, they will be published to default feed:
