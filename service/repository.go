@@ -239,7 +239,7 @@ func (repo *Repository) DeleteEpisodes(ctx context.Context, episodeIDs []string,
 		return fmt.Errorf("failed to delete episodes: %w", err)
 	}
 
-	setEpisodeIDs := make([]interface{}, len(episodeIDs), len(episodeIDs))
+	setEpisodeIDs := make([]interface{}, len(episodeIDs))
 	for _, eID := range episodeIDs {
 		setEpisodeIDs = append(setEpisodeIDs, eID)
 	}

@@ -40,11 +40,8 @@ func NewRedisJobsQueue(redisClient *redis.Client, concurrency int, keyPrefix str
 	}
 
 	go func() { // consumer errors must be consumed or else the consumer will block on error
-		for {
-			select {
-			case err := <-c.Errors:
-				logger.Error("redisqueue consumer error", zaperr.ToField(err))
-			}
+		for err := range c.Errors {
+			logger.Error("redisqueue consumer error", zaperr.ToField(err))
 		}
 	}()
 

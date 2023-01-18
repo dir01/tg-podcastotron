@@ -30,7 +30,7 @@ func getS3Client(ctx context.Context, bucketName string) (client *s3.Client, tea
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("error creating container: %w", err)
 	}
-	teardown = func() { container.Terminate(ctx) }
+	teardown = func() { _ = container.Terminate(ctx) }
 
 	host, err := container.Host(ctx)
 	if err != nil {

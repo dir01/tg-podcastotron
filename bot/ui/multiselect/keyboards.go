@@ -143,21 +143,6 @@ func (ms *MultiSelect) buildPaginationRow() []models.InlineKeyboardButton {
 	return row
 }
 
-func (ms *MultiSelect) maybePaginateItems() []*Item {
-	var items []*Item
-	if len(ms.items) <= ms.maxItemsPerPage {
-		items = ms.items
-	} else {
-		begin := ms.currentPage * ms.maxItemsPerPage
-		end := (ms.currentPage + 1) * ms.maxItemsPerPage
-		if end > len(ms.items) {
-			end = len(ms.items)
-		}
-		items = ms.items[begin:end]
-	}
-	return items
-}
-
 func (ms *MultiSelect) pagesCount() int {
 	maxPage := len(ms.items) / ms.maxItemsPerPage
 	if len(ms.items)%ms.maxItemsPerPage != 0 {

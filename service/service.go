@@ -125,7 +125,9 @@ func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, filepat
 		zap.Any("filepaths", filepaths),
 		zap.String("userID", userID),
 	}
+
 	svc.logger.Info("queueing episodes creation", zapFields...)
+
 	if err := svc.jobsQueue.Publish(ctx, createEpisodes, &CreateEpisodesQueuePayload{
 		URL:    url,
 		Paths:  filepaths,
@@ -133,6 +135,7 @@ func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, filepat
 	}); err != nil {
 		return zaperr.Wrap(err, "failed to enqueue episodes creation", zapFields...)
 	}
+
 	return nil
 }
 
@@ -289,15 +292,14 @@ func (svc *Service) PublishEpisodes(ctx context.Context, episodeIDs []string, fe
 		}
 
 		episode.FeedIDs = append(episode.FeedIDs, feedID)
-		episode, err = svc.repository.SaveEpisode(ctx, episode)
-		if err != nil {
+		if _, err = svc.repository.SaveEpisode(ctx, episode); err != nil {
 			return zaperr.Wrap(err, "failed to update episode feed ids", zapFields...)
 		}
 
 		feed.EpisodeIDs = append(feed.EpisodeIDs, epID)
 	}
 
-	if feed, err = svc.repository.SaveFeed(ctx, feed); err != nil {
+	if _, err = svc.repository.SaveFeed(ctx, feed); err != nil {
 		return zaperr.Wrap(err, "failed to update feed episode ids", zapFields...)
 	}
 
@@ -333,15 +335,14 @@ func (svc *Service) UnpublishEpisodes(ctx context.Context, episodeIDs []string, 
 		}
 
 		episode.FeedIDs = remove(episode.FeedIDs, feedID)
-		episode, err = svc.repository.SaveEpisode(ctx, episode)
-		if err != nil {
+		if _, err = svc.repository.SaveEpisode(ctx, episode); err != nil {
 			return fmt.Errorf("failed to update episode feed ids: %w", err)
 		}
 
 		feed.EpisodeIDs = remove(feed.EpisodeIDs, id)
 	}
 
-	if feed, err = svc.repository.SaveFeed(ctx, feed); err != nil {
+	if _, err = svc.repository.SaveFeed(ctx, feed); err != nil {
 		return fmt.Errorf("failed to update feed episode ids: %w", err)
 	}
 

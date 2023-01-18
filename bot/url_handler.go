@@ -187,6 +187,7 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 	for _, statusChange := range changes {
 		epIDs = append(epIDs, statusChange.Episode.ID)
 	}
+
 	if err := ub.service.PublishEpisodes(ctx, epIDs, defaultFeed.ID, userID); err != nil {
 		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zap.Error(err))
 	}

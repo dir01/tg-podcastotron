@@ -58,58 +58,6 @@ func formatIDsCompactly(ids []string) (string, error) {
 		rangeStartIdx = i + 1
 	}
 
-	//if rangeStartIdx == len(parsed) {
-	//	resultParts = append(resultParts, strconv.Itoa(parsed[len(parsed)-1]))
-	//}
-
-	return strings.Join(resultParts, "_"), nil
-}
-
-func formatIDsCompactly1(ids []string) (string, error) {
-	if len(ids) == 0 {
-		return "", nil
-	}
-	if len(ids) == 1 {
-		return ids[0], nil
-	}
-	if len(ids) == 2 {
-		return ids[0] + "_" + ids[1], nil
-	}
-
-	parsed := make([]int, len(ids))
-	for i, id := range ids {
-		asInt, err := strconv.Atoi(id)
-		if err != nil {
-			return "", fmt.Errorf("failed to parse id %q: %w", id, err)
-		}
-		parsed[i] = asInt
-	}
-
-	var resultParts []string
-	rangeStartIdx := 0
-
-	for i := range parsed {
-		if i == 0 {
-			continue
-		}
-
-		isEnd := i == len(parsed)-1
-
-		if !isEnd && parsed[i] == parsed[i-1]+1 {
-			continue
-		}
-
-		resultParts = append(resultParts, strconv.Itoa(parsed[rangeStartIdx]))
-		if i > rangeStartIdx+1 {
-			resultParts = append(resultParts, "to")
-			resultParts = append(resultParts, strconv.Itoa(parsed[i]))
-		} else if isEnd {
-			resultParts = append(resultParts, strconv.Itoa(parsed[i]))
-		}
-
-		rangeStartIdx = i
-	}
-
 	return strings.Join(resultParts, "_"), nil
 }
 
