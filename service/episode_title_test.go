@@ -50,7 +50,7 @@ func TestGenerateEpisodeTitle(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		title := generateEpisodeTitle(test.filepaths)
+		title := titleFromFilepaths(test.filepaths)
 		if title != test.expectedTitle {
 			t.Errorf("expected title %q, got %q", test.expectedTitle, title)
 		}

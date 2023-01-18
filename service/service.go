@@ -163,8 +163,15 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 		return nil, zaperr.Wrap(err, "failed to create mediary job", zapFields...)
 	}
 
+	episodeTitle := titleFromFilepaths(filepaths)
+	if episodeTitle == "" {
+		episodeTitle = titleFromSourceURL(mediaURL)
+	} else {
+		episodeTitle = fmt.Sprintf("%s - %s", episodeTitle, titleFromSourceURL(mediaURL))
+	}
+
 	ep := &Episode{
-		Title:           generateEpisodeTitle(filepaths),
+		Title:           episodeTitle,
 		UserID:          userID,
 		SourceURL:       mediaURL,
 		SourceFilepaths: filepaths,

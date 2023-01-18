@@ -1,13 +1,14 @@
 package service
 
 import (
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
 	"strings"
 )
 
-func generateEpisodeTitle(filepaths []string) string {
+func titleFromFilepaths(filepaths []string) string {
 	if len(filepaths) == 0 {
 		return ""
 	}
@@ -49,6 +50,14 @@ flatFiles:
 		suffix = strings.Trim(suffix, "_ -")
 		return suffix
 	}
+}
+
+func titleFromSourceURL(sourceURL string) string {
+	u, err := url.Parse(sourceURL)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("dn") // magnet link title
 }
 
 func getUpdatedEpisodeTitle(oldTitle string, newTitlePattern string) (newTitle string) {
