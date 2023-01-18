@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -27,11 +30,12 @@ type S3Store interface {
 }
 
 type Service struct {
-	logger     *zap.Logger
-	s3Store    S3Store
-	mediaSvc   mediary.Service
-	repository *Repository
-	jobsQueue  *jobsqueue.RedisJobQueue
+	logger         *zap.Logger
+	s3Store        S3Store
+	mediaSvc       mediary.Service
+	repository     *Repository
+	jobsQueue      *jobsqueue.RedisJobQueue
+	userPathSecret string
 
 	episodeStatusChangesChan chan []EpisodeStatusChange
 }
@@ -83,7 +87,7 @@ var (
 	ErrEpisodeNotFound = fmt.Errorf("episode not found")
 )
 
-func New(mediaSvc mediary.Service, repository *Repository, s3Store S3Store, jobsQueue *jobsqueue.RedisJobQueue, logger *zap.Logger) *Service {
+func New(mediaSvc mediary.Service, repository *Repository, s3Store S3Store, jobsQueue *jobsqueue.RedisJobQueue, userPathSecret string, logger *zap.Logger) *Service {
 	return &Service{
 		logger:                   logger,
 		s3Store:                  s3Store,
@@ -91,6 +95,7 @@ func New(mediaSvc mediary.Service, repository *Repository, s3Store S3Store, jobs
 		repository:               repository,
 		jobsQueue:                jobsQueue,
 		episodeStatusChangesChan: make(chan []EpisodeStatusChange, 1),
+		userPathSecret:           userPathSecret,
 	}
 }
 
@@ -149,7 +154,8 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 		zap.String("userID", userID),
 	}
 
-	presignURL, err := svc.s3Store.PreSignedURL(fmt.Sprintf("%s/%s", userID, filename))
+	episodePath := path.Join(svc.getUserKeyPrefix(userID), "episodes", filename)
+	presignURL, err := svc.s3Store.PreSignedURL(episodePath)
 	if err != nil {
 		return nil, zaperr.Wrap(err, "failed to get presigned url", zapFields...)
 	}
@@ -437,7 +443,8 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID s
 }
 
 func (svc *Service) createFeed(ctx context.Context, userID string, title string, feedID string) (*Feed, error) {
-	presignURL, err := svc.s3Store.PreSignedURL(fmt.Sprintf("feeds/%s/%s", userID, feedID))
+	feedPath := path.Join(svc.getUserKeyPrefix(userID), "feeds", feedID)
+	presignURL, err := svc.s3Store.PreSignedURL(feedPath)
 	if err != nil {
 		return nil, fmt.Errorf("CreateFeed failed to get presigned url: %w", err)
 	}
@@ -696,6 +703,11 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 	}
 
 	return nil
+}
+
+func (svc *Service) getUserKeyPrefix(id string) string {
+	hash := sha256.Sum256([]byte(svc.userPathSecret + id))
+	return hex.EncodeToString(hash[:])
 }
 
 func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, error) {

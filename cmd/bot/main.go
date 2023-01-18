@@ -42,6 +42,7 @@ func main() {
 	awsAccessKeyID := mustGetEnv("AWS_ACCESS_KEY_ID")
 	awsSecretAccessKey := mustGetEnv("AWS_SECRET_ACCESS_KEY")
 	awsBucketName := mustGetEnv("AWS_BUCKET_NAME")
+	userPathSecret := mustGetEnv("USER_PATH_SECRET") // just some random string, we'll use it to salt user id and take a hash as part of the path
 	// endregion
 
 	// region redis
@@ -94,7 +95,7 @@ func main() {
 	mediaryService := mediary.New(mediaryURL, logger)
 	svcRepo := service.NewRepository(redisClient, "undercast:service")
 	s3Store := service.NewS3Store(s3Client, awsBucketName)
-	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, "foo", logger)
+	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, userPathSecret, logger)
 
 	botStore := bot.NewRedisStore(redisClient, "undercast:bot")
 	authRepo := auth.NewRepository(redisClient, "undercast:auth")

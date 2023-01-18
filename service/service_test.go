@@ -44,7 +44,7 @@ func TestService(t *testing.T) {
 		},
 	}
 
-	svc := service.New(mockedMediary, repo, mockedS3Store, jobsQueue, logger)
+	svc := service.New(mockedMediary, repo, mockedS3Store, jobsQueue, "some-secret", logger)
 
 	t.Run("Two users create and get feeds", func(t *testing.T) {
 		feed1, err := svc.CreateFeed(ctx, "user-1", "feed-of-user-1")
