@@ -310,7 +310,7 @@ func (repo *Repository) episodeKeySlice(userID string, ids []string) []string {
 }
 
 func (repo *Repository) userFeedsKey(userID string) string {
-	return repo.keyPrefix + ":user:feeds" + userID
+	return repo.keyPrefix + ":user:feeds:" + userID
 }
 
 func (repo *Repository) feedsMapKey() string {

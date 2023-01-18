@@ -192,30 +192,14 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zap.Error(err))
 	}
 
-	episodeIDsStr, err := formatIDsCompactly(epIDs)
+	message, err := formatEpisodesCreatedMessage(epIDs, defaultFeed)
 	if err != nil {
-		ub.logger.Error("failed to format episode IDs", zap.Error(err))
+		ub.logger.Error("failed to format episodes created message", zap.Error(err))
+		message = "Accepted"
 	}
-
 	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      chatID,
-		Text: fmt.Sprintf(`
-%d episodes are scheduled.
-After they are processed, they will be published to default feed:
-<b>%s</b>
-%s
-
-To unpublish them from default feed, send command
-
-/unpublish_ep_%s_from_%s
-
-To publish them to another feed, send command
-
-/publish_ep_%s`,
-			len(changes), defaultFeed.Title, defaultFeed.URL,
-			episodeIDsStr, defaultFeed.ID,
-			episodeIDsStr,
-		),
+		Text:        message,
 		ParseMode:   models.ParseModeHTML,
 		ReplyMarkup: nil,
 	}); err != nil {
@@ -231,6 +215,42 @@ func (ub *UndercastBot) notifyStatusChanged(ctx context.Context, userID string, 
 	for _, change := range changes {
 		ub.sendTextMessage(ctx, chatID, "Episode #%s (%s) is now %s", change.Episode.ID, change.Episode.Title, change.NewStatus)
 	}
+}
+
+func formatEpisodesCreatedMessage(epIDs []string, defaultFeed *service.Feed) (string, error) {
+	if len(epIDs) == 0 {
+		return "", nil
+	}
+
+	if len(epIDs) == 1 {
+		return fmt.Sprintf(
+			`Episode creation scheduled.
+When it's ready, it will be published to default feed:
+
+<b>%s</b>
+<code>%s</code>
+
+To change the feed or name, send /ee_%s`,
+			defaultFeed.Title, defaultFeed.URL, epIDs[0],
+		), nil
+	}
+
+	episodeIDsStr, err := formatIDsCompactly(epIDs)
+	if err != nil {
+		return "", zaperr.Wrap(err, "failed to format episode IDs")
+	}
+
+	strBits := []string{
+		fmt.Sprintf("%d episodes are scheduled.", len(epIDs)),
+		"When they are ready, they will be published to default feed:",
+		"",
+		fmt.Sprintf("<b>%s</b>", defaultFeed.Title),
+		fmt.Sprintf("<code>%s</code>", defaultFeed.URL),
+		"",
+		fmt.Sprintf("To change the feed or name, send /ee_%s", episodeIDsStr),
+	}
+
+	return strings.Join(strBits, "\n"), nil
 }
 
 func getNTopExtensions(selectedNodes []*treemultiselect.TreeNode, n int) []string {
