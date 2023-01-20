@@ -34,7 +34,7 @@ type Service struct {
 	s3Store        S3Store
 	mediaSvc       mediary.Service
 	repository     *Repository
-	jobsQueue      *jobsqueue.RedisJobQueue
+	jobsQueue      *jobsqueue.RJQ
 	userPathSecret string
 
 	episodeStatusChangesChan chan []EpisodeStatusChange
@@ -87,7 +87,7 @@ var (
 	ErrEpisodeNotFound = fmt.Errorf("episode not found")
 )
 
-func New(mediaSvc mediary.Service, repository *Repository, s3Store S3Store, jobsQueue *jobsqueue.RedisJobQueue, userPathSecret string, logger *zap.Logger) *Service {
+func New(mediaSvc mediary.Service, repository *Repository, s3Store S3Store, jobsQueue *jobsqueue.RJQ, userPathSecret string, logger *zap.Logger) *Service {
 	return &Service{
 		logger:                   logger,
 		s3Store:                  s3Store,
@@ -115,6 +115,7 @@ func (svc *Service) Start(ctx context.Context) chan []EpisodeStatusChange {
 	svc.jobsQueue.Subscribe(ctx, regenerateFeed, func(payload []byte) error {
 		return svc.onRegenerateFeedQueueEvent(ctx, payload)
 	})
+	svc.jobsQueue.Run() // MUST be called after all subscriptions
 	return svc.episodeStatusChangesChan
 }
 

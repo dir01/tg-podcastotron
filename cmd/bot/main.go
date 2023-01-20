@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 	"undercast-bot/auth"
@@ -57,7 +57,7 @@ func main() {
 			logger.Error("error closing redis client", zap.Error(err))
 		}
 	}()
-	if _, err := redisClient.Ping().Result(); err != nil {
+	if _, err := redisClient.Ping(ctx).Result(); err != nil {
 		logger.Fatal("error connecting to redis", zap.Error(err))
 	}
 	// endregion

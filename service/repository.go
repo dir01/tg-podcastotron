@@ -6,23 +6,21 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
-func NewRepository(redisClient *redis.Client, keyPrefix string) *Repository {
-	return &Repository{redisClient: redisClient, keyPrefix: keyPrefix}
+func NewRepository(redisClient *redis.Client, namespace string) *Repository {
+	return &Repository{redisClient: redisClient, namespace: namespace}
 }
 
 type Repository struct {
 	redisClient *redis.Client
-	keyPrefix   string
+	namespace   string
 }
 
 const defaultFeedID = 1
 
 func (repo *Repository) SaveEpisode(ctx context.Context, episode *Episode) (*Episode, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
-
 	if episode.ID == "" {
 		episodeID, err := repo.nextEpisodeID(ctx, episode.UserID)
 		if err != nil {
@@ -35,12 +33,12 @@ func (repo *Repository) SaveEpisode(ctx context.Context, episode *Episode) (*Epi
 	if err != nil {
 		return nil, fmt.Errorf("failed to save episode: %w", err)
 	}
-	if err := redisClient.HSet(repo.episodeMapKey(), repo.episodeFieldKey(episode.UserID, episode.ID), episodeBytes).Err(); err != nil {
+	if err := repo.redisClient.HSet(ctx, repo.episodeMapKey(), repo.episodeFieldKey(episode.UserID, episode.ID), episodeBytes).Err(); err != nil {
 		return nil, fmt.Errorf("failed to save episode: %w", err)
 	}
 
 	userEpisodesSetKey := repo.userEpisodesSetKey(episode.UserID)
-	if err := redisClient.SAdd(userEpisodesSetKey, episode.ID).Err(); err != nil {
+	if err := repo.redisClient.SAdd(ctx, userEpisodesSetKey, episode.ID).Err(); err != nil {
 		return nil, fmt.Errorf("failed add episode to user episodes: %w", err)
 	}
 
@@ -48,7 +46,6 @@ func (repo *Repository) SaveEpisode(ctx context.Context, episode *Episode) (*Epi
 }
 
 func (repo *Repository) SaveFeed(ctx context.Context, feed *Feed) (*Feed, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
 
 	if feed.ID == "" {
 		feedID, err := repo.nextFeedID(ctx, feed.UserID)
@@ -62,12 +59,12 @@ func (repo *Repository) SaveFeed(ctx context.Context, feed *Feed) (*Feed, error)
 	if err != nil {
 		return nil, fmt.Errorf("failed to save feed: %w", err)
 	}
-	if err := redisClient.HSet(repo.feedsMapKey(), repo.feedFieldKey(feed.UserID, feed.ID), feedJSON).Err(); err != nil {
+	if err := repo.redisClient.HSet(ctx, repo.feedsMapKey(), repo.feedFieldKey(feed.UserID, feed.ID), feedJSON).Err(); err != nil {
 		return nil, fmt.Errorf("failed to save feed: %w", err)
 	}
 
 	userFeedsKey := repo.userFeedsKey(feed.UserID)
-	if err := redisClient.SAdd(userFeedsKey, feed.ID).Err(); err != nil {
+	if err := repo.redisClient.SAdd(ctx, userFeedsKey, feed.ID).Err(); err != nil {
 		return nil, fmt.Errorf("failed add feed to user feeds: %w", err)
 	}
 
@@ -75,9 +72,7 @@ func (repo *Repository) SaveFeed(ctx context.Context, feed *Feed) (*Feed, error)
 }
 
 func (repo *Repository) GetFeed(ctx context.Context, feedID string, userID string) (*Feed, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
-
-	rawFeed, err := redisClient.HGet(repo.feedsMapKey(), repo.feedFieldKey(userID, feedID)).Result()
+	rawFeed, err := repo.redisClient.HGet(ctx, repo.feedsMapKey(), repo.feedFieldKey(userID, feedID)).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, nil
@@ -89,9 +84,7 @@ func (repo *Repository) GetFeed(ctx context.Context, feedID string, userID strin
 }
 
 func (repo *Repository) GetEpisode(ctx context.Context, episodeID string, userID string) (*Episode, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
-
-	rawEpisode, err := redisClient.HGet(repo.episodeMapKey(), repo.episodeFieldKey(userID, episodeID)).Result()
+	rawEpisode, err := repo.redisClient.HGet(ctx, repo.episodeMapKey(), repo.episodeFieldKey(userID, episodeID)).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get episode: %w", err)
 	}
@@ -100,11 +93,9 @@ func (repo *Repository) GetEpisode(ctx context.Context, episodeID string, userID
 }
 
 func (repo *Repository) ListUserEpisodes(ctx context.Context, userID string) ([]*Episode, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
-
 	userEpisodesKey := repo.userEpisodesSetKey(userID)
 
-	episodeIDs, err := redisClient.SMembers(userEpisodesKey).Result()
+	episodeIDs, err := repo.redisClient.SMembers(ctx, userEpisodesKey).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list user episode ids: %w", err)
 	}
@@ -113,7 +104,7 @@ func (repo *Repository) ListUserEpisodes(ctx context.Context, userID string) ([]
 		return []*Episode{}, nil
 	}
 
-	rawEpisodes, err := redisClient.HMGet(repo.episodeMapKey(), repo.episodeKeySlice(userID, episodeIDs)...).Result()
+	rawEpisodes, err := repo.redisClient.HMGet(ctx, repo.episodeMapKey(), repo.episodeKeySlice(userID, episodeIDs)...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list user episodes: %w", err)
 	}
@@ -129,11 +120,10 @@ func (repo *Repository) ListUserEpisodes(ctx context.Context, userID string) ([]
 }
 
 func (repo *Repository) ListUserFeeds(ctx context.Context, userID string) ([]*Feed, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
 
 	userFeedsKey := repo.userFeedsKey(userID)
 
-	feedIDs, err := redisClient.SMembers(userFeedsKey).Result()
+	feedIDs, err := repo.redisClient.SMembers(ctx, userFeedsKey).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list user feed ids: %w", err)
 	}
@@ -142,7 +132,7 @@ func (repo *Repository) ListUserFeeds(ctx context.Context, userID string) ([]*Fe
 		return []*Feed{}, nil
 	}
 
-	rawFeeds, err := redisClient.HMGet(repo.feedsMapKey(), repo.feedFieldKeysSlice(userID, feedIDs)...).Result()
+	rawFeeds, err := repo.redisClient.HMGet(ctx, repo.feedsMapKey(), repo.feedFieldKeysSlice(userID, feedIDs)...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list user feeds: %w", err)
 	}
@@ -172,9 +162,7 @@ func (repo *Repository) ListFeedEpisodes(ctx context.Context, feed *Feed) ([]*Ep
 }
 
 func (repo *Repository) GetEpisodesMap(ctx context.Context, episodeIDs []string, userID string) (map[string]*Episode, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
-
-	rawEpisodes, err := redisClient.HMGet(repo.episodeMapKey(), repo.episodeKeySlice(userID, episodeIDs)...).Result()
+	rawEpisodes, err := repo.redisClient.HMGet(ctx, repo.episodeMapKey(), repo.episodeKeySlice(userID, episodeIDs)...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feed episodes: %w", err)
 	}
@@ -198,14 +186,12 @@ func (repo *Repository) GetEpisodesMap(ctx context.Context, episodeIDs []string,
 }
 
 func (repo *Repository) GetFeedsMap(ctx context.Context, feedIDs []string, userID string) (map[string]*Feed, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
-
 	feedKeys := make([]string, len(feedIDs))
 	for i, fID := range feedIDs {
 		feedKeys[i] = repo.feedFieldKey(userID, fID)
 	}
 
-	rawFeeds, err := redisClient.HMGet(repo.feedsMapKey(), feedKeys...).Result()
+	rawFeeds, err := repo.redisClient.HMGet(ctx, repo.feedsMapKey(), feedKeys...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feed episodes: %w", err)
 	}
@@ -227,14 +213,13 @@ func (repo *Repository) GetFeedsMap(ctx context.Context, feedIDs []string, userI
 }
 
 func (repo *Repository) DeleteEpisodes(ctx context.Context, episodeIDs []string, userID string) error {
-	redisClient := repo.redisClient.WithContext(ctx)
 
 	episodeKeys := make([]string, len(episodeIDs))
 	for i, eID := range episodeIDs {
 		episodeKeys[i] = repo.episodeFieldKey(userID, eID)
 	}
 
-	_, err := redisClient.HDel(repo.episodeMapKey(), episodeKeys...).Result()
+	_, err := repo.redisClient.HDel(ctx, repo.episodeMapKey(), episodeKeys...).Result()
 	if err != nil {
 		return fmt.Errorf("failed to delete episodes: %w", err)
 	}
@@ -244,7 +229,7 @@ func (repo *Repository) DeleteEpisodes(ctx context.Context, episodeIDs []string,
 		setEpisodeIDs = append(setEpisodeIDs, eID)
 	}
 
-	if err = redisClient.SRem(repo.userEpisodesSetKey(userID), setEpisodeIDs...).Err(); err != nil {
+	if err = repo.redisClient.SRem(ctx, repo.userEpisodesSetKey(userID), setEpisodeIDs...).Err(); err != nil {
 		return fmt.Errorf("failed to delete user episodes: %w", err)
 	}
 
@@ -253,9 +238,7 @@ func (repo *Repository) DeleteEpisodes(ctx context.Context, episodeIDs []string,
 
 // region ids
 func (repo *Repository) nextEpisodeID(ctx context.Context, userID string) (int64, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
-
-	id, err := redisClient.HIncrBy(repo.userEpisodeIDsCounterKey(), userID, 1).Result()
+	id, err := repo.redisClient.HIncrBy(ctx, repo.userEpisodeIDsCounterKey(), userID, 1).Result()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get next episode id: %w", err)
 	}
@@ -264,12 +247,11 @@ func (repo *Repository) nextEpisodeID(ctx context.Context, userID string) (int64
 }
 
 func (repo *Repository) nextFeedID(ctx context.Context, userID string) (int64, error) {
-	redisClient := repo.redisClient.WithContext(ctx)
 
 	var id int64 = -1
 	var err error
 	for id <= defaultFeedID {
-		id, err = redisClient.HIncrBy(repo.userFeedIDsCounterKey(), userID, 1).Result()
+		id, err = repo.redisClient.HIncrBy(ctx, repo.userFeedIDsCounterKey(), userID, 1).Result()
 		if err != nil {
 			return 0, fmt.Errorf("failed to get next episode id: %w", err)
 		}
@@ -282,11 +264,11 @@ func (repo *Repository) nextFeedID(ctx context.Context, userID string) (int64, e
 
 // region key helpers
 func (repo *Repository) userEpisodesSetKey(userID string) string {
-	return repo.keyPrefix + ":user:episodes:" + userID
+	return repo.namespace + ":user:episodes:" + userID
 }
 
 func (repo *Repository) episodeMapKey() string {
-	return repo.keyPrefix + ":episode"
+	return repo.namespace + ":episode"
 }
 
 func (repo *Repository) episodeFieldKey(userID, episodeID string) string {
@@ -294,11 +276,11 @@ func (repo *Repository) episodeFieldKey(userID, episodeID string) string {
 }
 
 func (repo *Repository) userEpisodeIDsCounterKey() string {
-	return repo.keyPrefix + ":user-episode-ids"
+	return repo.namespace + ":user-episode-ids"
 }
 
 func (repo *Repository) userFeedIDsCounterKey() string {
-	return repo.keyPrefix + ":user-feed-ids"
+	return repo.namespace + ":user-feed-ids"
 }
 
 func (repo *Repository) episodeKeySlice(userID string, ids []string) []string {
@@ -310,11 +292,11 @@ func (repo *Repository) episodeKeySlice(userID string, ids []string) []string {
 }
 
 func (repo *Repository) userFeedsKey(userID string) string {
-	return repo.keyPrefix + ":user:feeds:" + userID
+	return repo.namespace + ":user:feeds:" + userID
 }
 
 func (repo *Repository) feedsMapKey() string {
-	return fmt.Sprintf("%s:feeds", repo.keyPrefix)
+	return fmt.Sprintf("%s:feeds", repo.namespace)
 }
 
 func (repo *Repository) feedFieldKey(userID, feedID string) string {

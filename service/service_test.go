@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 	"go.uber.org/zap"
 	"undercast-bot/mediary"
 	"undercast-bot/mediary/mediarymocks"
@@ -31,8 +31,8 @@ func TestService(t *testing.T) {
 
 	logger, err := zap.NewDevelopment()
 
-	repo := service.NewRepository(redisClient, "some-prefix")
-	jobsQueue, err := jobsqueue.NewRedisJobsQueue(redisClient, 1, "", logger)
+	repo := service.NewRepository(redisClient, "some-namespace")
+	jobsQueue, err := jobsqueue.NewRedisJobsQueue(redisClient, 1, "some-jobs-namespace", logger)
 	mockedMediary := &mediarymocks.ServiceMock{
 		CreateUploadJobFunc: func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error) {
 			return "some-job-id", nil

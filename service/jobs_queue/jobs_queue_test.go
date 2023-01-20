@@ -2,13 +2,14 @@ package jobsqueue
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 	"go.uber.org/zap"
 	tests "undercast-bot/testutils"
 )
@@ -47,11 +48,17 @@ func TestRedisJobsQueue(t *testing.T) {
 		callCount := 0
 		callCountMutex.Unlock()
 		queue.Subscribe(ctx, "some-job-type", func(payloadBytes []byte) error {
+			var result map[string]string
+			err := json.Unmarshal(payloadBytes, &result)
+			if err != nil {
+				return err
+			}
 			callCountMutex.Lock()
 			defer callCountMutex.Unlock()
 			callCount++
 			return nil
 		})
+		queue.Run()
 
 		if eventually(20*time.Second, func() bool {
 			callCountMutex.RLock()
@@ -88,6 +95,8 @@ func TestRedisJobsQueue(t *testing.T) {
 			}
 			return nil
 		})
+
+		queue.Run()
 
 		if eventually(60*time.Second, func() bool {
 			callCountMutex.RLock()

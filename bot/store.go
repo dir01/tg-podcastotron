@@ -4,29 +4,27 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
 type RedisStore struct {
 	redisClient *redis.Client
-	keyPrefix   string
+	namespace   string
 }
 
-func NewRedisStore(redisClient *redis.Client, keyPrefix string) *RedisStore {
+func NewRedisStore(redisClient *redis.Client, namespace string) *RedisStore {
 	return &RedisStore{
 		redisClient: redisClient,
-		keyPrefix:   keyPrefix,
+		namespace:   namespace,
 	}
 }
 
 func (rs *RedisStore) SetChatID(ctx context.Context, userID string, chatID int64) error {
-	redisClient := rs.redisClient.WithContext(ctx)
-	return redisClient.HSet(rs.chatIDsKey(), userID, chatID).Err()
+	return rs.redisClient.HSet(ctx, rs.chatIDsKey(), userID, chatID).Err()
 }
 
 func (rs *RedisStore) GetChatID(ctx context.Context, userID string) (int64, error) {
-	redisClient := rs.redisClient.WithContext(ctx)
-	chatID, err := redisClient.HGet(rs.chatIDsKey(), userID).Int64()
+	chatID, err := rs.redisClient.HGet(ctx, rs.chatIDsKey(), userID).Int64()
 	if err != nil {
 		return -1, err
 	}
@@ -34,5 +32,5 @@ func (rs *RedisStore) GetChatID(ctx context.Context, userID string) (int64, erro
 }
 
 func (rs *RedisStore) chatIDsKey() string {
-	return fmt.Sprintf("%s:chat_ids", rs.keyPrefix)
+	return fmt.Sprintf("%s:chat_ids", rs.namespace)
 }

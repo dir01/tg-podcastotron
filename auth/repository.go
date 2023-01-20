@@ -6,19 +6,19 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
-func NewRepository(redisClient *redis.Client, keyPrefix string) Repository {
+func NewRepository(redisClient *redis.Client, namespace string) Repository {
 	return &repository{
 		redisClient: redisClient,
-		keyPrefix:   keyPrefix,
+		namespace:   namespace,
 	}
 }
 
 type repository struct {
 	redisClient *redis.Client
-	keyPrefix   string
+	namespace   string
 }
 
 func (r *repository) AddUser(ctx context.Context, user *User) error {
@@ -27,8 +27,7 @@ func (r *repository) AddUser(ctx context.Context, user *User) error {
 		return fmt.Errorf("failed to marshal user: %w", err)
 	}
 
-	redisClient := r.redisClient.WithContext(ctx)
-	if err = redisClient.Set(r.getUserKey(user.ID), userBytes, 0).Err(); err != nil {
+	if err = r.redisClient.Set(ctx, r.getUserKey(user.ID), userBytes, 0).Err(); err != nil {
 		return fmt.Errorf("failed to set user bytes to redis: %w", err)
 	}
 
@@ -36,11 +35,9 @@ func (r *repository) AddUser(ctx context.Context, user *User) error {
 }
 
 func (r *repository) GetUser(ctx context.Context, userID string) (*User, error) {
-	redisClient := r.redisClient.WithContext(ctx)
-
 	key := r.getUserKey(userID)
 
-	userBytes, err := redisClient.Get(key).Bytes()
+	userBytes, err := r.redisClient.Get(ctx, key).Bytes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user bytes from redis: %w", err)
 	}
@@ -54,6 +51,6 @@ func (r *repository) GetUser(ctx context.Context, userID string) (*User, error) 
 }
 
 func (r *repository) getUserKey(userID string) string {
-	prefix := strings.Trim(r.keyPrefix, ":")
+	prefix := strings.Trim(r.namespace, ":")
 	return fmt.Sprintf("%s:user:%s", prefix, userID)
 }
