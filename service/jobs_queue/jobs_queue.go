@@ -61,7 +61,7 @@ func (r *RJQ) Subscribe(ctx context.Context, jobType string, f func(payloadBytes
 		return f(job.Payload)
 	}, &work2.JobOptions{
 		MaxExecutionTime: 2 * time.Hour,
-		IdleWait:         1 * time.Second,
+		IdleWait:         60 * time.Second,
 		NumGoroutines:    int64(r.concurrency),
 	})
 	if err != nil {
