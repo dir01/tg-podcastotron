@@ -38,6 +38,10 @@ func main() {
 	adminUsername := mustGetEnv("ADMIN_USERNAME")
 	mediaryURL := mustGetEnv("MEDIARY_URL")
 	redisURL := mustGetEnv("REDIS_URL")
+	bgJobsRedisURL := os.Getenv("REDIS_URL_BG_JOBS")
+	if bgJobsRedisURL == "" {
+		bgJobsRedisURL = redisURL
+	}
 	awsRegion := mustGetEnv("AWS_REGION")
 	awsAccessKeyID := mustGetEnv("AWS_ACCESS_KEY_ID")
 	awsSecretAccessKey := mustGetEnv("AWS_SECRET_ACCESS_KEY")
@@ -46,20 +50,27 @@ func main() {
 	// endregion
 
 	// region redis
-	opt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		logger.Fatal("error parsing redis url", zap.Error(err))
-	}
-	redisClient := redis.NewClient(opt)
-	defer func() {
-		err := redisClient.Close()
+	mkRedisClient := func(url string) (client *redis.Client, teardown func()) {
+		opt, err := redis.ParseURL(url)
 		if err != nil {
-			logger.Error("error closing redis client", zap.Error(err))
+			logger.Fatal("error parsing redis url", zap.Error(err))
 		}
-	}()
-	if _, err := redisClient.Ping(ctx).Result(); err != nil {
-		logger.Fatal("error connecting to redis", zap.Error(err))
+		redisClient := redis.NewClient(opt)
+		if _, err := redisClient.Ping(ctx).Result(); err != nil {
+			logger.Fatal("error connecting to redis", zap.Error(err))
+		}
+		return redisClient, func() {
+			err := redisClient.Close()
+			if err != nil {
+				logger.Error("error closing redis client", zap.Error(err))
+			}
+		}
 	}
+	redisClient, cleanupRedisClient := mkRedisClient(redisURL)
+	defer cleanupRedisClient()
+	bgJobsRedisClient, cleanupBgJobsRedisClient := mkRedisClient(bgJobsRedisURL)
+	defer cleanupBgJobsRedisClient()
+
 	// endregion
 
 	// region s3 client
@@ -86,7 +97,7 @@ func main() {
 	// endregion
 
 	// region jobs queue
-	jobsQueue, err := jobsqueue.NewRedisJobsQueue(redisClient, 2, "undercast:jobs", logger)
+	jobsQueue, err := jobsqueue.NewRedisJobsQueue(bgJobsRedisClient, 2, "undercast:jobs", logger)
 	if err != nil {
 		logger.Fatal("error creating jobs queue", zap.Error(err))
 	}
