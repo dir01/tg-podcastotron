@@ -58,7 +58,11 @@ func (r *RJQ) Publish(ctx context.Context, jobType string, payload any) error {
 
 func (r *RJQ) Subscribe(ctx context.Context, jobType string, f func(payloadBytes []byte) error) {
 	err := r.work2Worker.Register(jobType, func(job *work2.Job, opt *work2.DequeueOptions) error {
-		return f(job.Payload)
+		if err := f(job.Payload); err != nil {
+			r.logger.Error("failed to handle job", zaperr.ToField(err))
+			return err
+		}
+		return nil
 	}, &work2.JobOptions{
 		MaxExecutionTime: 2 * time.Hour,
 		IdleWait:         2 * time.Second,

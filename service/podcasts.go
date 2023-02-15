@@ -9,7 +9,7 @@ import (
 	"github.com/jbub/podcasts"
 )
 
-func generateFeed(feed *Feed, episodesMap map[string]*Episode) (io.Reader, error) {
+func generateFeed(feed *Feed, episodesMap map[string]*Episode) (io.ReadSeeker, error) {
 	p := &podcasts.Podcast{
 		Title: feed.Title,
 	}
@@ -39,5 +39,5 @@ func generateFeed(feed *Feed, episodesMap map[string]*Episode) (io.Reader, error
 		return nil, fmt.Errorf("failed to write feed: %w", err)
 	}
 
-	return b, nil
+	return bytes.NewReader(b.Bytes()), nil // TODO: there must be a better way to do this
 }

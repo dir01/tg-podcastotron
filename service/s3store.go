@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 func NewS3Store(s3Client *s3.Client, bucketName string) S3Store {
@@ -27,7 +28,6 @@ func (store *s3Store) PreSignedURL(key string) (string, error) {
 	presignResult, err := presignClient.PresignPutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket: aws.String(store.bucketName),
 		Key:    aws.String(key),
-		//StorageClass: types.StorageClassReducedRedundancy,
 	}, s3.WithPresignExpires(48*time.Hour))
 	if err != nil {
 		return "", fmt.Errorf("failed to presign upload: %w", err)
@@ -46,7 +46,7 @@ func WithContentType(contentType string) func(*PutOptions) {
 	}
 }
 
-func (store *s3Store) Put(ctx context.Context, key string, dataReader io.Reader, opts ...func(*PutOptions)) error {
+func (store *s3Store) Put(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*PutOptions)) error {
 	options := &PutOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -56,6 +56,7 @@ func (store *s3Store) Put(ctx context.Context, key string, dataReader io.Reader,
 		Bucket: aws.String(store.bucketName),
 		Key:    aws.String(key),
 		Body:   dataReader,
+		ACL:    types.ObjectCannedACLPublicRead,
 	}
 	if options.ContentType != "" {
 		putObjectInput.ContentType = aws.String(options.ContentType)

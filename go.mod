@@ -1,4 +1,4 @@
-module undercast-bot
+module tg-podcastotron
 
 go 1.19
 

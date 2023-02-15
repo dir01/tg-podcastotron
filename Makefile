@@ -1,7 +1,7 @@
 build:
 	go build -o ./bin/bot ./cmd/bot
 
-run-server:
+run:
 	go run ./cmd/bot
 
 run_all: docker-compose-up run-server

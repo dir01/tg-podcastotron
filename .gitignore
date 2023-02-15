@@ -1,2 +1,4 @@
 bin/*
-.env
+.env*
+!.env.example
+vendor/

@@ -6,7 +6,7 @@ package mediarymocks
 import (
 	"context"
 	"sync"
-	"undercast-bot/mediary"
+	"tg-podcastotron/mediary"
 )
 
 // Ensure, that ServiceMock does implement mediary.Service.

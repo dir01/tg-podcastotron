@@ -10,7 +10,7 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
-	"undercast-bot/service"
+	"tg-podcastotron/service"
 )
 
 const editEpisodesHelp = `

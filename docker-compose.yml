@@ -1,6 +1,29 @@
 version: '2'
 services:
+  mediary:
+    image: ghcr.io/dir01/mediary:latest
+    network_mode: host
+    ports:
+      - "8700:8700"
+    environment:
+      - REDIS_URL=redis://localhost:6379
+      - BIND_ADDR=0.0.0.0:8700
+    depends_on:
+      redis:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+
   redis:
     image: redis:alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+
+  s3:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4566']

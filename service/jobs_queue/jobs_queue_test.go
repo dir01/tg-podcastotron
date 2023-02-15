@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"go.uber.org/zap"
-	tests "undercast-bot/testutils"
+	tests "tg-podcastotron/testutils"
 )
 
 var logger, _ = zap.NewDevelopment()
