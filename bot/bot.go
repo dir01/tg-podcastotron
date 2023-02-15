@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
-	"undercast-bot/auth"
-	"undercast-bot/service"
+	"tg-podcastotron/auth"
+	"tg-podcastotron/service"
 )
 
 func NewUndercastBot(token string, auth *auth.Service, botStore *RedisStore, service *service.Service, logger *zap.Logger) *UndercastBot {

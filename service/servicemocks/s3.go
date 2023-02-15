@@ -7,7 +7,7 @@ import (
 	"context"
 	"io"
 	"sync"
-	"undercast-bot/service"
+	"tg-podcastotron/service"
 )
 
 // Ensure, that MockS3Store does implement service.S3Store.
@@ -23,7 +23,7 @@ var _ service.S3Store = &MockS3Store{}
 //			PreSignedURLFunc: func(key string) (string, error) {
 //				panic("mock out the PreSignedURL method")
 //			},
-//			PutFunc: func(ctx context.Context, key string, dataReader io.Reader, opts ...func(*service.PutOptions)) error {
+//			PutFunc: func(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*service.PutOptions)) error {
 //				panic("mock out the Put method")
 //			},
 //		}
@@ -37,7 +37,7 @@ type MockS3Store struct {
 	PreSignedURLFunc func(key string) (string, error)
 
 	// PutFunc mocks the Put method.
-	PutFunc func(ctx context.Context, key string, dataReader io.Reader, opts ...func(*service.PutOptions)) error
+	PutFunc func(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*service.PutOptions)) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -53,7 +53,7 @@ type MockS3Store struct {
 			// Key is the key argument value.
 			Key string
 			// DataReader is the dataReader argument value.
-			DataReader io.Reader
+			DataReader io.ReadSeeker
 			// Opts is the opts argument value.
 			Opts []func(*service.PutOptions)
 		}
@@ -95,14 +95,14 @@ func (mock *MockS3Store) PreSignedURLCalls() []struct {
 }
 
 // Put calls PutFunc.
-func (mock *MockS3Store) Put(ctx context.Context, key string, dataReader io.Reader, opts ...func(*service.PutOptions)) error {
+func (mock *MockS3Store) Put(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*service.PutOptions)) error {
 	if mock.PutFunc == nil {
 		panic("MockS3Store.PutFunc: method is nil but S3Store.Put was just called")
 	}
 	callInfo := struct {
 		Ctx        context.Context
 		Key        string
-		DataReader io.Reader
+		DataReader io.ReadSeeker
 		Opts       []func(*service.PutOptions)
 	}{
 		Ctx:        ctx,
@@ -123,13 +123,13 @@ func (mock *MockS3Store) Put(ctx context.Context, key string, dataReader io.Read
 func (mock *MockS3Store) PutCalls() []struct {
 	Ctx        context.Context
 	Key        string
-	DataReader io.Reader
+	DataReader io.ReadSeeker
 	Opts       []func(*service.PutOptions)
 } {
 	var calls []struct {
 		Ctx        context.Context
 		Key        string
-		DataReader io.Reader
+		DataReader io.ReadSeeker
 		Opts       []func(*service.PutOptions)
 	}
 	mock.lockPut.RLock()

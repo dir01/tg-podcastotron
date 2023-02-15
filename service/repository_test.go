@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	tests "undercast-bot/testutils"
+	tests "tg-podcastotron/testutils"
 )
 
 func TestRepository(t *testing.T) {

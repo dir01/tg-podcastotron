@@ -13,11 +13,11 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
-	"undercast-bot/auth"
-	"undercast-bot/bot"
-	"undercast-bot/mediary"
-	"undercast-bot/service"
-	"undercast-bot/service/jobs_queue"
+	"tg-podcastotron/auth"
+	"tg-podcastotron/bot"
+	"tg-podcastotron/mediary"
+	"tg-podcastotron/service"
+	jobsqueue "tg-podcastotron/service/jobs_queue"
 )
 
 func main() {
@@ -87,13 +87,24 @@ func main() {
 	if err != nil {
 		logger.Fatal("error creating s3 config", zap.Error(err))
 	}
+
+	if endpoint := os.Getenv("AWS_ENDPOINT"); endpoint != "" {
+		cfg.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...any) (aws.Endpoint, error) {
+			return aws.Endpoint{
+				URL:               endpoint,
+				HostnameImmutable: true,
+			}, nil
+		})
+	}
+
 	s3Client := s3.NewFromConfig(cfg)
-	_, _ = s3Client.CreateBucket(ctx, &s3.CreateBucketInput{
+	_, err = s3Client.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(awsBucketName),
 		CreateBucketConfiguration: &types.CreateBucketConfiguration{
 			LocationConstraint: types.BucketLocationConstraint(awsRegion),
 		},
 	})
+	logger.Debug("created bucket", zap.String("bucket", awsBucketName), zap.Error(err))
 	// endregion
 
 	// region jobs queue

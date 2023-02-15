@@ -7,12 +7,12 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"go.uber.org/zap"
-	"undercast-bot/mediary"
-	"undercast-bot/mediary/mediarymocks"
-	"undercast-bot/service"
-	jobsqueue "undercast-bot/service/jobs_queue"
-	"undercast-bot/service/servicemocks"
-	tests "undercast-bot/testutils"
+	"tg-podcastotron/mediary"
+	"tg-podcastotron/mediary/mediarymocks"
+	"tg-podcastotron/service"
+	jobsqueue "tg-podcastotron/service/jobs_queue"
+	"tg-podcastotron/service/servicemocks"
+	tests "tg-podcastotron/testutils"
 )
 
 func TestService(t *testing.T) {

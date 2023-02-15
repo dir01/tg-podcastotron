@@ -17,9 +17,11 @@ type CreateEpisodesQueuePayload struct {
 }
 
 type PollEpisodesStatusQueuePayload struct {
-	EpisodeIDs []string
-	UserID     string
-	PollAfter  *time.Time
+	EpisodeIDs       []string
+	UserID           string
+	PollingStartedAt *time.Time
+	Delay            *time.Duration
+	PollAfter        *time.Time
 }
 
 type RegenerateFeedQueuePayload struct {

@@ -10,8 +10,8 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
-	"undercast-bot/bot/ui/treemultiselect"
-	"undercast-bot/service"
+	"tg-podcastotron/bot/ui/treemultiselect"
+	"tg-podcastotron/service"
 )
 
 func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {

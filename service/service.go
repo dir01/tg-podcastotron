@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -19,14 +18,14 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
-	"undercast-bot/mediary"
-	jobsqueue "undercast-bot/service/jobs_queue"
+	"tg-podcastotron/mediary"
+	jobsqueue "tg-podcastotron/service/jobs_queue"
 )
 
 //go:generate moq -out servicemocks/s3.go -pkg servicemocks -rm . S3Store:MockS3Store
 type S3Store interface {
 	PreSignedURL(key string) (string, error)
-	Put(ctx context.Context, key string, dataReader io.Reader, opts ...func(*PutOptions)) error
+	Put(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*PutOptions)) error
 }
 
 type Service struct {
@@ -444,8 +443,7 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID s
 }
 
 func (svc *Service) createFeed(ctx context.Context, userID string, title string, feedID string) (*Feed, error) {
-	feedPath := path.Join(svc.getUserKeyPrefix(userID), "feeds", feedID)
-	presignURL, err := svc.s3Store.PreSignedURL(feedPath)
+	presignURL, err := svc.s3Store.PreSignedURL(svc.constructS3FeedPath(userID, feedID))
 	if err != nil {
 		return nil, fmt.Errorf("CreateFeed failed to get presigned url: %w", err)
 	}
@@ -632,12 +630,32 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	}
 
 	if len(episodeIDsToRequeue) > 0 {
-		pollAfter := time.Now().Add(10 * time.Second)
-		if err := svc.jobsQueue.Publish(ctx, pollEpisodesStatus, &PollEpisodesStatusQueuePayload{
-			EpisodeIDs: episodeIDsToRequeue,
-			UserID:     payload.UserID,
-			PollAfter:  &pollAfter,
-		}); err != nil {
+		newPayload := &PollEpisodesStatusQueuePayload{
+			EpisodeIDs:       episodeIDsToRequeue,
+			UserID:           payload.UserID,
+			PollingStartedAt: payload.PollingStartedAt,
+			Delay:            payload.Delay,
+			PollAfter:        payload.PollAfter,
+		}
+
+		now := time.Now()
+		if newPayload.PollingStartedAt == nil {
+			newPayload.PollingStartedAt = &now
+		}
+		if newPayload.Delay != nil {
+			newDelay := time.Duration(float64(*newPayload.Delay) * 1.1)
+			if newDelay > 5*time.Minute {
+				newDelay = 5 * time.Minute
+			}
+			newPayload.Delay = &newDelay
+		} else {
+			newDelay := 10 * time.Second
+			newPayload.Delay = &newDelay
+		}
+		pollAfter := now.Add(*newPayload.Delay)
+		newPayload.PollAfter = &pollAfter
+
+		if err := svc.jobsQueue.Publish(ctx, pollEpisodesStatus, newPayload); err != nil {
 			return zaperr.Wrap(err, "failed to enqueue episode status polling", append([]zap.Field{zap.Strings("episodeIDs", episodeIDsToRequeue)}, zapFields...)...)
 		}
 	}
@@ -687,23 +705,21 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 		episodesMap[ep.ID] = ep
 	}
 
+	objectKey := svc.constructS3FeedPath(feed.UserID, feed.ID)
 	feedReader, err := generateFeed(feed, episodesMap)
 	if err != nil {
 		return zaperr.Wrap(err, "failed to generate feed", zapFields...)
 	}
 
-	parsed, err := url.Parse(feed.URL)
-	if err != nil {
-		return zaperr.Wrap(err, "failed to parse feed url", zapFields...)
-	}
-	objectKey := strings.TrimPrefix(parsed.Path, "/")
-
 	if err := svc.s3Store.Put(ctx, objectKey, feedReader, WithContentType("text/xml; charset=utf-8")); err != nil {
-		zapFields = append(zapFields, zap.Error(err))
 		return zaperr.Wrap(err, "failed to upload feed", zapFields...)
 	}
 
 	return nil
+}
+
+func (svc *Service) constructS3FeedPath(userID string, feedID string) string {
+	return path.Join(svc.getUserKeyPrefix(userID), "feeds", feedID)
 }
 
 func (svc *Service) getUserKeyPrefix(id string) string {
