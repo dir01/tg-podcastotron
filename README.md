@@ -23,8 +23,8 @@ Bot is configured via environment variables, here is a table:
 | Variable                | Description                                                                                               |
 | ----------------------- |:--------------------------------------------------------------------------------------------------------- |
 | `MEDIARY_URL`           | Root endpoint of [mediary](https://github.com/dir01/mediary), my media downloader-encoder-uploader        |
-| `REDIS_URL`             | Full `redis://username:password@host:port/db kind of URL. This redis will be used for storage             |
-| `REDIS_URL_BG_JOBS`     | Full `redis://username:password@host:port/db kind of URL. This redis will be used for background jobs     |
+| `REDIS_URL`             | Full `redis://username:password@host:port/db` kind of URL. This redis will be used for storage             |
+| `REDIS_URL_BG_JOBS`     | Full `redis://username:password@host:port/db` kind of URL. This redis will be used for background jobs     |
 | `BOT_TOKEN`             | Telegram bot token obtained from [@BotFather](https://t.me/BotFather)                                     |
 | `ADMIN_USERNAME`        | Telegram username of a person who will be considered admin. This person can grant access to another users |
 | `AWS_BUCKET_NAME`       | S3 bucket to store media files and actual podcast feeds                                                   |
