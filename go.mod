@@ -14,7 +14,7 @@ require (
 	github.com/hori-ryota/zaperr v0.0.0-20210301022522-bfd0551d7f64
 	github.com/jbub/podcasts v0.2.0
 	github.com/joho/godotenv v1.4.0
-	github.com/taylorchu/work v0.2.10
+	github.com/taylorchu/work v0.2.11
 	github.com/testcontainers/testcontainers-go v0.18.0
 	go.uber.org/multierr v1.9.0
 	go.uber.org/zap v1.24.0
