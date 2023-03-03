@@ -70,6 +70,7 @@ type JobStatusName string
 
 const (
 	JobStatusAccepted    JobStatusName = "accepted"
+	JobStatusCreated     JobStatusName = "created"
 	JobStatusDownloading JobStatusName = "downloading"
 	JobStatusProcessing  JobStatusName = "processing"
 	JobStatusUploading   JobStatusName = "uploading"

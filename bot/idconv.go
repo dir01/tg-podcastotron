@@ -2,6 +2,7 @@ package bot
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -19,17 +20,23 @@ func formatIDsCompactly(ids []string) (string, error) {
 		return ids[0], nil
 	}
 
-	if len(ids) == 2 {
-		return ids[0] + "_" + ids[1], nil
-	}
-
-	parsed := make([]int, len(ids))
-	for i, id := range ids {
+	parsed := make([]int, 0, len(ids))
+	seen := make(map[string]struct{})
+	for _, id := range ids {
 		asInt, err := strconv.Atoi(id)
 		if err != nil {
 			return "", fmt.Errorf("failed to parse id %q: %w", id, err)
 		}
-		parsed[i] = asInt
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		parsed = append(parsed, asInt)
+		seen[id] = struct{}{}
+	}
+	sort.Ints(parsed)
+
+	if len(parsed) == 2 {
+		return fmt.Sprintf("%d_%d", parsed[0], parsed[1]), nil
 	}
 
 	var resultParts []string

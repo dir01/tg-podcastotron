@@ -18,7 +18,7 @@ type Repository struct {
 	namespace   string
 }
 
-const defaultFeedID = 1
+const DefaultFeedID = 1
 
 func (repo *Repository) SaveEpisode(ctx context.Context, episode *Episode) (*Episode, error) {
 	if episode.ID == "" {
@@ -148,12 +148,17 @@ func (repo *Repository) ListUserFeeds(ctx context.Context, userID string) ([]*Fe
 }
 
 func (repo *Repository) ListFeedEpisodes(ctx context.Context, feed *Feed) ([]*Episode, error) {
+	if len(feed.EpisodeIDs) == 0 {
+		return []*Episode{}, nil
+	}
+
 	episodesMap, err := repo.GetEpisodesMap(ctx, feed.EpisodeIDs, feed.UserID)
 	if err != nil {
 		return nil, err
 	}
 
 	sortedEpisodes := make([]*Episode, len(feed.EpisodeIDs))
+
 	for i, episodeID := range feed.EpisodeIDs {
 		sortedEpisodes[i] = episodesMap[episodeID]
 	}
@@ -186,6 +191,9 @@ func (repo *Repository) GetEpisodesMap(ctx context.Context, episodeIDs []string,
 }
 
 func (repo *Repository) GetFeedsMap(ctx context.Context, feedIDs []string, userID string) (map[string]*Feed, error) {
+	if len(feedIDs) == 0 {
+		return map[string]*Feed{}, nil
+	}
 	feedKeys := make([]string, len(feedIDs))
 	for i, fID := range feedIDs {
 		feedKeys[i] = repo.feedFieldKey(userID, fID)
@@ -213,7 +221,6 @@ func (repo *Repository) GetFeedsMap(ctx context.Context, feedIDs []string, userI
 }
 
 func (repo *Repository) DeleteEpisodes(ctx context.Context, episodeIDs []string, userID string) error {
-
 	episodeKeys := make([]string, len(episodeIDs))
 	for i, eID := range episodeIDs {
 		episodeKeys[i] = repo.episodeFieldKey(userID, eID)
@@ -236,6 +243,19 @@ func (repo *Repository) DeleteEpisodes(ctx context.Context, episodeIDs []string,
 	return nil
 }
 
+func (repo *Repository) DeleteFeed(ctx context.Context, feedID string, userID string) error {
+	_, err := repo.redisClient.HDel(ctx, repo.feedsMapKey(), repo.feedFieldKey(userID, feedID)).Result()
+	if err != nil {
+		return fmt.Errorf("failed to delete feed: %w", err)
+	}
+
+	if err = repo.redisClient.SRem(ctx, repo.userFeedsKey(userID), feedID).Err(); err != nil {
+		return fmt.Errorf("failed to delete user feed: %w", err)
+	}
+
+	return nil
+}
+
 // region ids
 func (repo *Repository) nextEpisodeID(ctx context.Context, userID string) (int64, error) {
 	id, err := repo.redisClient.HIncrBy(ctx, repo.userEpisodeIDsCounterKey(), userID, 1).Result()
@@ -250,7 +270,7 @@ func (repo *Repository) nextFeedID(ctx context.Context, userID string) (int64, e
 
 	var id int64 = -1
 	var err error
-	for id <= defaultFeedID {
+	for id <= DefaultFeedID {
 		id, err = repo.redisClient.HIncrBy(ctx, repo.userFeedIDsCounterKey(), userID, 1).Result()
 		if err != nil {
 			return 0, fmt.Errorf("failed to get next episode id: %w", err)
