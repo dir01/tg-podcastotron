@@ -157,9 +157,9 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 			return
 		}
 
-		if changesCreated, exists := statusToChangesMap[service.EpisodeStatusCreated]; exists && len(changesCreated) > 0 {
+		if createdMap, exists := statusToChangesMap[service.EpisodeStatusCreated]; exists && len(createdMap) > 0 {
 			delete(statusToChangesMap, service.EpisodeStatusCreated)
-			ub.handleEpisodesCreated(ctx, userID, chatID, changesCreated)
+			ub.handleEpisodesCreated(ctx, userID, chatID, createdMap)
 		}
 
 		var otherChanges []service.EpisodeStatusChange
@@ -188,7 +188,7 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 		epIDs = append(epIDs, statusChange.Episode.ID)
 	}
 
-	if err := ub.service.PublishEpisodes(ctx, epIDs, defaultFeed.ID, userID); err != nil {
+	if err := ub.service.PublishEpisodes(ctx, epIDs, []string{defaultFeed.ID}, userID); err != nil {
 		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zap.Error(err))
 	}
 

@@ -31,6 +31,7 @@ If you want to have more than one podcast feed,
 /nf will create a new podcast feed;
 /ef_1 will edit podcast feed with ID 1;
 /f will list all your podcast feeds;
+/f_1 will show more info about podcast feed with ID 1
 
 /start or /help will render this message
 `

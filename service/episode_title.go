@@ -60,16 +60,55 @@ func titleFromSourceURL(sourceURL string) string {
 	return u.Query().Get("dn") // magnet link title
 }
 
-func getUpdatedEpisodeTitle(oldTitle string, newTitlePattern string) (newTitle string) {
-	if !strings.Contains(newTitlePattern, "%n") {
-		return newTitlePattern
+func getUpdatedEpisodeTitle(episodes []*Episode, newTitlePattern string) map[string]string {
+	result := make(map[string]string, len(episodes))
+
+	hasVariablePart := strings.Contains(newTitlePattern, "%v")
+	hasID := strings.Contains(newTitlePattern, "%id")
+
+	if !hasVariablePart && !hasID {
+		for _, e := range episodes {
+			result[e.ID] = newTitlePattern
+		}
+		return result
 	}
-	re := regexp.MustCompile(`(\d+)[^\d]*$`)
-	matches := re.FindStringSubmatch(oldTitle)
-	if len(matches) == 0 {
-		return newTitlePattern
+
+	var prefix, suffix string
+	if hasVariablePart {
+		oldTitles := make([]string, len(episodes))
+		for i, e := range episodes {
+			oldTitles[i] = e.Title
+		}
+		prefix, suffix = longestCommonPrefixAndSuffix(oldTitles)
 	}
-	return strings.Replace(newTitlePattern, "%n", matches[1], 1)
+
+	// pad id with zeros to have the same length as the longest id
+	maxIDLength := 0
+	if hasID {
+		for _, e := range episodes {
+			if len(e.ID) > maxIDLength {
+				maxIDLength = len(e.ID)
+			}
+		}
+	}
+
+	for _, e := range episodes {
+		newTitle := newTitlePattern
+		if hasVariablePart {
+			variablePart := strings.TrimSuffix(strings.TrimPrefix(e.Title, prefix), suffix)
+			newTitle = strings.Replace(newTitle, "%v", variablePart, -1)
+		}
+		if hasID {
+			newID := e.ID
+			for len(newID) < maxIDLength {
+				newID = "0" + newID
+			}
+			newTitle = strings.Replace(newTitle, "%id", newID, -1)
+		}
+		result[e.ID] = newTitle
+	}
+
+	return result
 }
 
 func longestCommonPrefixAndSuffix(strs []string) (longestPrefix string, longestSuffix string) {
