@@ -20,6 +20,9 @@ var _ service.S3Store = &MockS3Store{}
 //
 //		// make and configure a mocked service.S3Store
 //		mockedS3Store := &MockS3Store{
+//			DeleteFunc: func(ctx context.Context, key string) error {
+//				panic("mock out the Delete method")
+//			},
 //			PreSignedURLFunc: func(key string) (string, error) {
 //				panic("mock out the PreSignedURL method")
 //			},
@@ -33,6 +36,9 @@ var _ service.S3Store = &MockS3Store{}
 //
 //	}
 type MockS3Store struct {
+	// DeleteFunc mocks the Delete method.
+	DeleteFunc func(ctx context.Context, key string) error
+
 	// PreSignedURLFunc mocks the PreSignedURL method.
 	PreSignedURLFunc func(key string) (string, error)
 
@@ -41,6 +47,13 @@ type MockS3Store struct {
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// Delete holds details about calls to the Delete method.
+		Delete []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Key is the key argument value.
+			Key string
+		}
 		// PreSignedURL holds details about calls to the PreSignedURL method.
 		PreSignedURL []struct {
 			// Key is the key argument value.
@@ -58,8 +71,45 @@ type MockS3Store struct {
 			Opts []func(*service.PutOptions)
 		}
 	}
+	lockDelete       sync.RWMutex
 	lockPreSignedURL sync.RWMutex
 	lockPut          sync.RWMutex
+}
+
+// Delete calls DeleteFunc.
+func (mock *MockS3Store) Delete(ctx context.Context, key string) error {
+	if mock.DeleteFunc == nil {
+		panic("MockS3Store.DeleteFunc: method is nil but S3Store.Delete was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+		Key string
+	}{
+		Ctx: ctx,
+		Key: key,
+	}
+	mock.lockDelete.Lock()
+	mock.calls.Delete = append(mock.calls.Delete, callInfo)
+	mock.lockDelete.Unlock()
+	return mock.DeleteFunc(ctx, key)
+}
+
+// DeleteCalls gets all the calls that were made to Delete.
+// Check the length with:
+//
+//	len(mockedS3Store.DeleteCalls())
+func (mock *MockS3Store) DeleteCalls() []struct {
+	Ctx context.Context
+	Key string
+} {
+	var calls []struct {
+		Ctx context.Context
+		Key string
+	}
+	mock.lockDelete.RLock()
+	calls = mock.calls.Delete
+	mock.lockDelete.RUnlock()
+	return calls
 }
 
 // PreSignedURL calls PreSignedURLFunc.

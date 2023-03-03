@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/signal"
 
@@ -47,6 +49,7 @@ func main() {
 	awsSecretAccessKey := mustGetEnv("AWS_SECRET_ACCESS_KEY")
 	awsBucketName := mustGetEnv("AWS_BUCKET_NAME")
 	userPathSecret := mustGetEnv("USER_PATH_SECRET") // just some random string, we'll use it to salt user id and take a hash as part of the path
+	defaultFeedTitle := os.Getenv("DEFAULT_FEED_TITLE")
 	// endregion
 
 	// region redis
@@ -70,7 +73,6 @@ func main() {
 	defer cleanupRedisClient()
 	bgJobsRedisClient, cleanupBgJobsRedisClient := mkRedisClient(bgJobsRedisURL)
 	defer cleanupBgJobsRedisClient()
-
 	// endregion
 
 	// region s3 client
@@ -117,7 +119,11 @@ func main() {
 	mediaryService := mediary.New(mediaryURL, logger)
 	svcRepo := service.NewRepository(redisClient, "undercast:service")
 	s3Store := service.NewS3Store(s3Client, awsBucketName)
-	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, userPathSecret, logger)
+	obfuscateIDs := func(id string) string {
+		hash := sha256.Sum256([]byte(userPathSecret + id))
+		return hex.EncodeToString(hash[:])
+	}
+	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, defaultFeedTitle, obfuscateIDs, logger)
 
 	botStore := bot.NewRedisStore(redisClient, "undercast:bot")
 	authRepo := auth.NewRepository(redisClient, "undercast:auth")

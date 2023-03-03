@@ -39,7 +39,8 @@ type MultiSelect struct {
 	actionButtons         []ActionButton
 
 	// data
-	items []*Item
+	items    []*Item
+	itemsMap map[string]*Item
 
 	// internal
 	prefix            string
@@ -49,11 +50,13 @@ type MultiSelect struct {
 }
 
 func New(b *bot.Bot, items []*Item, onConfirmSelection OnConfirmSelectionHandler, opts ...Option) *MultiSelect {
+	itemsMap := make(map[string]*Item, len(items))
 	for idx, item := range items {
 		if item.ID == "" {
 			item.ID = strconv.Itoa(idx)
 			items[idx] = item
 		}
+		itemsMap[item.ID] = item
 	}
 	multiSelect := &MultiSelect{
 		formatItem: func(item *Item) string {
@@ -74,6 +77,7 @@ func New(b *bot.Bot, items []*Item, onConfirmSelection OnConfirmSelectionHandler
 		onItemSelectedHandler: nil,
 		onError:               defaultOnError,
 		items:                 items,
+		itemsMap:              itemsMap,
 		prefix:                bot.RandomString(16),
 	}
 

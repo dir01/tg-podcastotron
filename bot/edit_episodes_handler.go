@@ -10,6 +10,8 @@ import (
 	"github.com/go-telegram/bot/models"
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
+	"tg-podcastotron/bot/ui/multiselect"
 	"tg-podcastotron/service"
 )
 
@@ -76,6 +78,43 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	cmdDelete := "delete"
 	cmdManageFeeds := "manageFeeds"
 
+	kb := [][]models.InlineKeyboardButton{
+		{{
+			Text:         "Rename Episodes",
+			CallbackData: prefix + cmdRename,
+		}},
+		{{
+			Text:         "Manage Episodes Feeds",
+			CallbackData: prefix + cmdManageFeeds,
+		}},
+		{{
+			Text:         "Delete Episodes",
+			CallbackData: prefix + cmdDelete,
+		}},
+	}
+
+	initialMsg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        initialMessageText,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: kb},
+	})
+	if err != nil {
+		zapFields = append(zapFields, zap.Any("message", initialMsg))
+		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
+		return
+	}
+
+	deleteInitialMessage := func() {
+		if _, err := ub.bot.DeleteMessage(ctx, &bot.DeleteMessageParams{
+			ChatID:    chatID,
+			MessageID: initialMsg.ID,
+		}); err != nil {
+			zapFields := append([]zap.Field{zap.Error(err)}, zapFields...)
+			ub.logger.Error("failed to delete initial message", zapFields...)
+		}
+	}
+
 	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, prefix, bot.MatchTypePrefix, func(ctx context.Context, b *bot.Bot, update *models.Update) {
 		st := strings.ReplaceAll(update.CallbackQuery.Data, prefix, "")
 
@@ -125,41 +164,87 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 				return
 			}
 
-			replyText := fmt.Sprintf("%d episodes were deleted", len(epIDs))
-			if ids, err := formatIDsCompactly(epIDs); err != nil {
-				ub.logger.Error("error", zap.Error(zaperr.Wrap(err, "failed to format episode IDs", zapFields...)))
-			} else {
-				replyText = fmt.Sprintf("Episodes %s were deleted", ids)
+			statusMsgText := formatEpisodesDeletedStatusMessage(epIDs)
+
+			ub.sendTextMessage(ctx, chatID, statusMsgText)
+
+			deleteInitialMessage()
+		case cmdManageFeeds:
+			items := make([]*multiselect.Item, len(feeds))
+			for i, feed := range feeds {
+				selected := false
+				for _, ep := range episodesMap {
+					if slices.Contains(ep.FeedIDs, feed.ID) {
+						selected = true
+						break
+					}
+				}
+				items[i] = &multiselect.Item{
+					ID:       feed.ID,
+					Text:     feed.Title,
+					Selected: selected,
+				}
 			}
-			ub.sendTextMessage(ctx, chatID, replyText)
+			feedSelector := multiselect.New(
+				ub.bot,
+				items,
+				func(ctx context.Context, b *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+
+					feedIDs := make([]string, 0, len(items))
+					for _, item := range items {
+						if item.Selected {
+							feedIDs = append(feedIDs, item.ID)
+						}
+					}
+
+					if err := ub.service.PublishEpisodes(ctx, epIDs, feedIDs, userID); err != nil {
+						ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to set episodes feeds", zapFields...))
+						return
+					}
+
+					statusMsgText := formatManageFeedsStatusMessage(epIDs, feedIDs)
+
+					ub.sendTextMessage(ctx, chatID, statusMsgText)
+
+					deleteInitialMessage()
+				},
+				multiselect.WithItemFilters(multiselect.ItemFilter{}),
+			)
+			if _, err = ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID:      chatID,
+				Text:        "Select feeds to add/remove",
+				ParseMode:   models.ParseModeHTML,
+				ReplyMarkup: feedSelector,
+			}); err != nil {
+				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
+			}
 		}
 	})
 
-	kb := [][]models.InlineKeyboardButton{
-		{{
-			Text:         "Rename Episodes",
-			CallbackData: prefix + cmdRename,
-		}},
-		{{
-			Text:         "Manage Episodes Feeds",
-			CallbackData: prefix + cmdManageFeeds,
-		}},
-		{{
-			Text:         "Delete Episodes",
-			CallbackData: prefix + cmdDelete,
-		}},
-	}
+}
 
-	if msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        initialMessageText,
-		ParseMode:   models.ParseModeHTML,
-		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: kb},
-	}); err != nil {
-		zapFields = append(zapFields, zap.Any("message", msg))
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
-		return
+func formatEpisodesDeletedStatusMessage(epIDs []string) string {
+	statusMsgText := fmt.Sprintf("Episode %s was deleted", epIDs[0])
+	if len(epIDs) > 1 {
+		statusMsgText = fmt.Sprintf("%d episodes were deleted (%s)", len(epIDs), strings.Join(epIDs, ", "))
 	}
+	return statusMsgText
+}
+
+func formatManageFeedsStatusMessage(epIDs []string, feedIDs []string) string {
+	var statusMsgParts []string
+	if len(epIDs) == 1 {
+		statusMsgParts = []string{fmt.Sprintf("Episode %s was", epIDs[0])}
+	} else {
+		statusMsgParts = []string{fmt.Sprintf("%d episodes (%s) were", len(epIDs), strings.Join(epIDs, ", "))}
+	}
+	if len(feedIDs) == 1 {
+		statusMsgParts = append(statusMsgParts, fmt.Sprintf("added to feed %s", feedIDs[0]))
+	} else {
+		statusMsgParts = append(statusMsgParts, fmt.Sprintf("added to %d feeds (%s)", len(feedIDs), strings.Join(feedIDs, ", ")))
+	}
+	statusMsgText := strings.Join(statusMsgParts, " ")
+	return statusMsgText
 }
 
 func (ub *UndercastBot) formatInitialMessage(epIDs []string, episodesMap map[string]*service.Episode, feedMap map[string]*service.Feed) (string, error) {

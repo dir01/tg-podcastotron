@@ -99,8 +99,11 @@ func (ub *UndercastBot) parseListEpisodesCmd(text string) (epID string) {
 
 func (ub *UndercastBot) renderEpisodeFull(ep *service.Episode, feedMap map[string]*service.Feed) string {
 	var feedsDescriptionBits []string
-	for _, f := range ep.FeedIDs {
-		feedsDescriptionBits = append(feedsDescriptionBits, fmt.Sprintf("- <code>%s</code> (%s)", feedMap[f].ID, feedMap[f].Title))
+	for _, fid := range ep.FeedIDs {
+		f := feedMap[fid]
+		feedsDescriptionBits = append(feedsDescriptionBits, fmt.Sprintf(
+			"- <code>%s</code> (%s) [info: /f_%s] [edit: /ef_%s]", f.ID, f.Title, f.ID, f.ID,
+		))
 	}
 	feedsDescription := strings.Join(feedsDescriptionBits, "\n")
 

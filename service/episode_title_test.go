@@ -1,6 +1,7 @@
 package service
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -59,35 +60,39 @@ func TestGenerateEpisodeTitle(t *testing.T) {
 
 func TestGetUpdatedEpisodeTitle(t *testing.T) {
 	tests := []struct {
-		oldTitle         string
+		episodes         []*Episode
 		newTitlePattern  string
-		expectedNewTitle string
+		expectedTitleMap map[string]string
 	}{
 		{
-			oldTitle:         "Some Title - 04",
+			episodes:         []*Episode{{ID: "1", Title: "Some Title - 04"}},
 			newTitlePattern:  "Some Other Title",
-			expectedNewTitle: "Some Other Title",
+			expectedTitleMap: map[string]string{"1": "Some Other Title"},
 		},
 		{
-			oldTitle:         "Untitled - 14",
-			newTitlePattern:  "My Episode - %n",
-			expectedNewTitle: "My Episode - 14",
+			episodes:        []*Episode{{ID: "1", Title: "Untitled - 01_02"}, {ID: "2", Title: "Untitled - 02_05"}},
+			newTitlePattern: "My Episode - %v",
+			expectedTitleMap: map[string]string{
+				"1": "My Episode - 1_02",
+				"2": "My Episode - 2_05",
+			},
 		},
 		{
-			oldTitle:         "Untitled - 04",
-			newTitlePattern:  "My Episode - %n",
-			expectedNewTitle: "My Episode - 04",
-		},
-		{
-			oldTitle:         "Book 22 - Chapter 04",
-			newTitlePattern:  "MyBook - Part %n",
-			expectedNewTitle: "MyBook - Part 04",
+			episodes: []*Episode{
+				{ID: "3", Title: "FOO"},
+				{ID: "512", Title: "FOO"},
+			},
+			newTitlePattern: "Bar - %id",
+			expectedTitleMap: map[string]string{
+				"3":   "Bar - 003",
+				"512": "Bar - 512",
+			},
 		},
 	}
 	for _, test := range tests {
-		newTitle := getUpdatedEpisodeTitle(test.oldTitle, test.newTitlePattern)
-		if newTitle != test.expectedNewTitle {
-			t.Errorf("expected title %q, got %q", test.expectedNewTitle, newTitle)
+		titleMap := getUpdatedEpisodeTitle(test.episodes, test.newTitlePattern)
+		if !reflect.DeepEqual(test.expectedTitleMap, titleMap) {
+			t.Errorf("expected title map %v, got %v", test.expectedTitleMap, titleMap)
 		}
 	}
 }

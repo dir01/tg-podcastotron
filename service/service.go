@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,17 +24,19 @@ import (
 type S3Store interface {
 	PreSignedURL(key string) (string, error)
 	Put(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*PutOptions)) error
+	Delete(ctx context.Context, key string) error
 }
 
 type Service struct {
-	logger         *zap.Logger
-	s3Store        S3Store
-	mediaSvc       mediary.Service
-	repository     *Repository
-	jobsQueue      *jobsqueue.RJQ
-	userPathSecret string
+	logger       *zap.Logger
+	s3Store      S3Store
+	mediaSvc     mediary.Service
+	repository   *Repository
+	jobsQueue    *jobsqueue.RJQ
+	obfuscateIDs func(string) string
 
 	episodeStatusChangesChan chan []EpisodeStatusChange
+	defaultFeedTitle         string
 }
 
 type Metadata = mediary.Metadata
@@ -55,6 +55,7 @@ type Episode struct {
 	FileLenBytes    int64
 	Format          string
 	FeedIDs         []string
+	StorageKey      string
 }
 
 type EpisodeStatus string
@@ -82,11 +83,24 @@ var (
 		1 * time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second,
 		40 * time.Second, 60 * time.Second, 120 * time.Second, 240 * time.Second,
 	}
-	ErrFeedNotFound    = fmt.Errorf("feed not found")
-	ErrEpisodeNotFound = fmt.Errorf("episode not found")
+	ErrFeedNotFound            = fmt.Errorf("feed not found")
+	ErrEpisodeNotFound         = fmt.Errorf("episode not found")
+	ErrNotImplemented          = fmt.Errorf("not implemented")
+	ErrCannotDeleteDefaultFeed = fmt.Errorf("cannot delete default feed")
 )
 
-func New(mediaSvc mediary.Service, repository *Repository, s3Store S3Store, jobsQueue *jobsqueue.RJQ, userPathSecret string, logger *zap.Logger) *Service {
+func New(
+	mediaSvc mediary.Service,
+	repository *Repository,
+	s3Store S3Store,
+	jobsQueue *jobsqueue.RJQ,
+	defaultFeedTitle string,
+	obfuscateIDs func(string) string,
+	logger *zap.Logger,
+) *Service {
+	if defaultFeedTitle == "" {
+		defaultFeedTitle = "Podcastotron"
+	}
 	return &Service{
 		logger:                   logger,
 		s3Store:                  s3Store,
@@ -94,7 +108,8 @@ func New(mediaSvc mediary.Service, repository *Repository, s3Store S3Store, jobs
 		repository:               repository,
 		jobsQueue:                jobsQueue,
 		episodeStatusChangesChan: make(chan []EpisodeStatusChange, 1),
-		userPathSecret:           userPathSecret,
+		obfuscateIDs:             obfuscateIDs,
+		defaultFeedTitle:         defaultFeedTitle,
 	}
 }
 
@@ -146,16 +161,17 @@ func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, filepat
 
 func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepaths []string, userID string) (*Episode, error) {
 	filename := uuid.New().String() + ".mp3" // TODO: implement more elaborate filename generation
+	episodeKey := path.Join(svc.getUserKeyPrefix(userID), "episodes", filename)
 
 	zapFields := []zap.Field{
 		zap.String("mediaURL", mediaURL),
 		zap.Strings("filepaths", filepaths),
 		zap.String("filename", filename),
 		zap.String("userID", userID),
+		zap.String("episodeKey", episodeKey),
 	}
 
-	episodePath := path.Join(svc.getUserKeyPrefix(userID), "episodes", filename)
-	presignURL, err := svc.s3Store.PreSignedURL(episodePath)
+	presignURL, err := svc.s3Store.PreSignedURL(episodeKey)
 	if err != nil {
 		return nil, zaperr.Wrap(err, "failed to get presigned url", zapFields...)
 	}
@@ -184,6 +200,7 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 		UserID:          userID,
 		SourceURL:       mediaURL,
 		SourceFilepaths: filepaths,
+		StorageKey:      episodeKey,
 		URL:             stripQuery(presignURL),
 		MediaryID:       mediaryID,
 		PubDate:         time.Now(),
@@ -235,7 +252,7 @@ func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, erro
 	}
 
 	for _, f := range feeds {
-		if f.ID == strconv.Itoa(defaultFeedID) {
+		if f.ID == strconv.Itoa(DefaultFeedID) {
 			return feeds, nil // if default feed is present, we're all set
 		}
 	}
@@ -250,6 +267,14 @@ func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, erro
 	return feeds, nil
 }
 
+func (svc *Service) GetFeedsMap(ctx context.Context, feedIDs []string, userID string) (map[string]*Feed, error) {
+	feeds, err := svc.repository.GetFeedsMap(ctx, feedIDs, userID)
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to get feeds map", zap.Strings("feedIDs", feedIDs))
+	}
+	return feeds, nil
+}
+
 func (svc *Service) DefaultFeed(ctx context.Context, userID string) (*Feed, error) {
 	defaultFeedID := "1"
 
@@ -261,7 +286,7 @@ func (svc *Service) DefaultFeed(ctx context.Context, userID string) (*Feed, erro
 		return existing, nil
 	}
 
-	created, err := svc.createFeed(ctx, userID, "Default Undercast Feed", defaultFeedID)
+	created, err := svc.createFeed(ctx, userID, svc.defaultFeedTitle, defaultFeedID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default feed: %w", err)
 	}
@@ -273,88 +298,101 @@ func (svc *Service) CreateFeed(ctx context.Context, userID string, title string)
 	return svc.createFeed(ctx, userID, title, "")
 }
 
-func (svc *Service) PublishEpisodes(ctx context.Context, episodeIDs []string, feedID, userID string) error {
+func (svc *Service) PublishEpisodes(ctx context.Context, episodeIDs []string, feedIDs []string, userID string) error {
 	zapFields := []zap.Field{
 		zap.Strings("episodeIDs", episodeIDs),
-		zap.String("feedID", feedID),
+		zap.Strings("feedIDs", feedIDs),
 		zap.String("userID", userID),
 	}
-	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
+
+	episodes := make([]*Episode, 0, len(episodeIDs))
+	episodesMap, err := svc.repository.GetEpisodesMap(ctx, episodeIDs, userID)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to publish episode", zapFields...)
+		return zaperr.Wrap(err, "failed to set episodes feeds", zapFields...)
 	}
-	if feed == nil {
-		return zaperr.Wrap(ErrFeedNotFound, "feed not found", zapFields...)
-	}
-
-	// FIXME: non-transactional persistence
 	for _, epID := range episodeIDs {
-		if slices.Contains(feed.EpisodeIDs, epID) {
-			continue
-		}
-		episode, err := svc.repository.GetEpisode(ctx, epID, userID)
-		if err != nil {
-			return zaperr.Wrap(err, "failed to publish episode", zapFields...)
-		}
+		episodes = append(episodes, episodesMap[epID])
+	}
 
-		episode.FeedIDs = append(episode.FeedIDs, feedID)
-		if _, err = svc.repository.SaveEpisode(ctx, episode); err != nil {
+	desiredFeeds := make([]*Feed, 0, len(feedIDs))
+	desiredFeedsMap, err := svc.repository.GetFeedsMap(ctx, feedIDs, userID)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to set episodes feeds", zapFields...)
+	}
+	for _, feedID := range feedIDs {
+		desiredFeeds = append(desiredFeeds, desiredFeedsMap[feedID])
+	}
+
+	existingFeedIDs := make(map[string]struct{}, len(episodes)*2)
+	for _, ep := range episodes {
+		for _, feedID := range ep.FeedIDs {
+			existingFeedIDs[feedID] = struct{}{}
+		}
+	}
+	existingFeedsMap, err := svc.repository.GetFeedsMap(ctx, maps.Keys(existingFeedIDs), userID)
+
+	changedEpisodes := make(map[*Episode]struct{}, len(episodes))
+	changedFeeds := make(map[*Feed]struct{}, len(desiredFeeds))
+
+	for _, ep := range episodes {
+		// region unpublish
+		for _, existingFeedID := range ep.FeedIDs {
+			if _, ok := desiredFeedsMap[existingFeedID]; !ok {
+				// remove episode from feed
+				existingFeed := existingFeedsMap[existingFeedID]
+				existingFeed.EpisodeIDs = remove(existingFeed.EpisodeIDs, ep.ID)
+				changedFeeds[existingFeed] = struct{}{}
+				// remove feed from episode
+				ep.FeedIDs = remove(ep.FeedIDs, existingFeedID)
+				changedEpisodes[ep] = struct{}{}
+			}
+		}
+		// endregion
+
+		for _, desiredFeed := range desiredFeeds {
+			if slices.Contains(ep.FeedIDs, desiredFeed.ID) {
+				continue
+			}
+			// we know this feed will change,
+			// but we'll do it later to preserve order
+			changedFeeds[desiredFeed] = struct{}{}
+			// add feed to episode
+			ep.FeedIDs = append(ep.FeedIDs, desiredFeed.ID)
+			changedEpisodes[ep] = struct{}{}
+		}
+	}
+
+	// region publish
+	for _, f := range desiredFeeds {
+		for _, ep := range episodes {
+			if !slices.Contains(f.EpisodeIDs, ep.ID) {
+				f.EpisodeIDs = append(f.EpisodeIDs, ep.ID)
+			}
+		}
+		changedFeeds[f] = struct{}{}
+	}
+	// endregion
+
+	for ep, _ := range changedEpisodes {
+		if _, err = svc.repository.SaveEpisode(ctx, ep); err != nil {
 			return zaperr.Wrap(err, "failed to update episode feed ids", zapFields...)
 		}
-
-		feed.EpisodeIDs = append(feed.EpisodeIDs, epID)
 	}
 
-	if _, err = svc.repository.SaveFeed(ctx, feed); err != nil {
-		return zaperr.Wrap(err, "failed to update feed episode ids", zapFields...)
+	for feed, _ := range changedFeeds {
+		if _, err = svc.repository.SaveFeed(ctx, feed); err != nil {
+			return zaperr.Wrap(err, "failed to update feed episode ids", zapFields...)
+		}
+	}
+
+	changedFeedIDs := make([]string, 0, len(changedFeeds))
+	for feed, _ := range changedFeeds {
+		changedFeedIDs = append(changedFeedIDs, feed.ID)
 	}
 
 	if err = svc.jobsQueue.Publish(ctx, regenerateFeed, RegenerateFeedQueuePayload{
 		UserID:  userID,
-		FeedIDs: []string{feedID},
-	}); err != nil {
-		return zaperr.Wrap(err, "failed to publish regenerate feed job", zapFields...)
-	}
-
-	return nil
-}
-
-func (svc *Service) UnpublishEpisodes(ctx context.Context, episodeIDs []string, feedID, userID string) error {
-	zapFields := []zap.Field{
-		zap.Strings("episodeIDs", episodeIDs),
-		zap.String("feedID", feedID),
-		zap.String("userID", userID),
-	}
-	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
-	if err != nil {
-		return zaperr.Wrap(ErrFeedNotFound, "unpublish failed to find feed", zapFields...)
-	}
-
-	// FIXME: non-transactional persistence
-	for _, id := range episodeIDs {
-		if !slices.Contains(feed.EpisodeIDs, id) {
-			continue
-		}
-		episode, err := svc.repository.GetEpisode(ctx, id, userID)
-		if err != nil {
-			return fmt.Errorf("failed to publish episode: %w", err)
-		}
-
-		episode.FeedIDs = remove(episode.FeedIDs, feedID)
-		if _, err = svc.repository.SaveEpisode(ctx, episode); err != nil {
-			return fmt.Errorf("failed to update episode feed ids: %w", err)
-		}
-
-		feed.EpisodeIDs = remove(feed.EpisodeIDs, id)
-	}
-
-	if _, err = svc.repository.SaveFeed(ctx, feed); err != nil {
-		return fmt.Errorf("failed to update feed episode ids: %w", err)
-	}
-
-	if err = svc.jobsQueue.Publish(ctx, regenerateFeed, RegenerateFeedQueuePayload{
-		UserID:  userID,
-		FeedIDs: []string{feedID},
+		FeedIDs: changedFeedIDs,
 	}); err != nil {
 		return zaperr.Wrap(err, "failed to publish regenerate feed job", zapFields...)
 	}
@@ -375,8 +413,9 @@ func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitle
 	}
 
 	feedsToUpdate := map[string]bool{}
+	newTitleMap := getUpdatedEpisodeTitle(maps.Values(episodesMap), newTitlePattern)
 	for _, ep := range episodesMap {
-		newTitle := getUpdatedEpisodeTitle(ep.Title, newTitlePattern)
+		newTitle := newTitleMap[ep.ID]
 		if newTitle != ep.Title {
 			ep.Title = newTitle
 			if _, err := svc.repository.SaveEpisode(ctx, ep); err != nil { // TODO: batch save
@@ -433,17 +472,97 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID s
 		}
 	}
 
+	for _, ep := range episodesMap {
+		svc.s3Store.Delete(ctx, svc.extractEpisodeS3Key(ep))
+	}
+
 	if err := svc.repository.DeleteEpisodes(ctx, epIDs, userID); err != nil {
 		return zaperr.Wrap(err, "failed to delete episodes", zapFields...)
 	}
 
-	// TODO: delete episodes from s3
+	return nil
+}
+
+func (svc *Service) RenameFeed(ctx context.Context, feedID string, userID string, newTitle string) error {
+	zapFields := []zap.Field{
+		zap.String("feedID", feedID),
+		zap.String("userID", userID),
+		zap.String("newTitle", newTitle),
+	}
+
+	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
+	if err != nil {
+		zapFields := append(zapFields, zap.Error(err))
+		return zaperr.Wrap(ErrFeedNotFound, "", zapFields...)
+	}
+
+	feed.Title = newTitle
+	if _, err := svc.repository.SaveFeed(ctx, feed); err != nil {
+		return zaperr.Wrap(err, "failed to save feed", zapFields...)
+	}
+
+	if err = svc.jobsQueue.Publish(ctx, regenerateFeed, RegenerateFeedQueuePayload{
+		UserID:  userID,
+		FeedIDs: []string{feedID},
+	}); err != nil {
+		return zaperr.Wrap(err, "failed to publish regenerate feed job", zapFields...)
+	}
+
+	return nil
+}
+
+func (svc *Service) DeleteFeed(ctx context.Context, feedID string, userID string, deleteEpisodes bool) error {
+	zapFields := []zap.Field{
+		zap.String("feedID", feedID),
+		zap.String("userID", userID),
+		zap.Bool("deleteEpisodes", deleteEpisodes),
+	}
+
+	if feedID == strconv.Itoa(DefaultFeedID) {
+		return zaperr.Wrap(ErrCannotDeleteDefaultFeed, "", zapFields...)
+	}
+
+	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
+	if err != nil || feed == nil {
+		return zaperr.Wrap(err, "failed to find feed", zapFields...)
+	}
+
+	if deleteEpisodes {
+		if err := svc.DeleteEpisodes(ctx, feed.EpisodeIDs, userID); err != nil {
+			return zaperr.Wrap(err, "failed to delete episodes", zapFields...)
+		}
+	} else if eps, err := svc.repository.ListFeedEpisodes(ctx, feed); err != nil {
+		return zaperr.Wrap(err, "failed to list feed episodes", zapFields...)
+	} else {
+		for _, ep := range eps {
+			ep.FeedIDs = remove(ep.FeedIDs, feedID)
+			if _, err := svc.repository.SaveEpisode(ctx, ep); err != nil {
+				return zaperr.Wrap(err, "failed to save episode", zapFields...)
+			}
+		}
+	}
+
+	if err := svc.s3Store.Delete(ctx, svc.constructS3FeedPath(userID, feedID)); err != nil {
+		return zaperr.Wrap(err, "failed to delete feed from s3", zapFields...)
+	}
+
+	if err := svc.repository.DeleteFeed(ctx, feedID, userID); err != nil {
+		return zaperr.Wrap(err, "failed to delete feed", zapFields...)
+	}
 
 	return nil
 }
 
 func (svc *Service) createFeed(ctx context.Context, userID string, title string, feedID string) (*Feed, error) {
-	presignURL, err := svc.s3Store.PreSignedURL(svc.constructS3FeedPath(userID, feedID))
+	if feedID == "" {
+		nextID, err := svc.repository.nextFeedID(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get next feed id: %w", err)
+		}
+		feedID = strconv.FormatInt(nextID, 10)
+	}
+	feedPath := svc.constructS3FeedPath(userID, feedID)
+	presignURL, err := svc.s3Store.PreSignedURL(feedPath)
 	if err != nil {
 		return nil, fmt.Errorf("CreateFeed failed to get presigned url: %w", err)
 	}
@@ -722,14 +841,24 @@ func (svc *Service) constructS3FeedPath(userID string, feedID string) string {
 	return path.Join(svc.getUserKeyPrefix(userID), "feeds", feedID)
 }
 
-func (svc *Service) getUserKeyPrefix(id string) string {
-	hash := sha256.Sum256([]byte(svc.userPathSecret + id))
-	return hex.EncodeToString(hash[:])
+func (svc *Service) getUserKeyPrefix(userID string) string {
+	return svc.obfuscateIDs(userID)
+}
+
+func (svc *Service) extractEpisodeS3Key(ep *Episode) string {
+	if ep.StorageKey != "" {
+		return ep.StorageKey
+	}
+	// ahd this is a fallback for old episodes
+	// that were created before we started saving storage key
+	// TODO: remove this fallback after some time
+	userPrefix := svc.getUserKeyPrefix(ep.UserID)
+	return ep.URL[strings.Index(ep.URL, userPrefix):]
 }
 
 func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, error) {
 	switch status {
-	case mediary.JobStatusAccepted:
+	case mediary.JobStatusAccepted, mediary.JobStatusCreated:
 		return EpisodeStatusPending, nil
 	case mediary.JobStatusDownloading:
 		return EpisodeStatusDownloading, nil

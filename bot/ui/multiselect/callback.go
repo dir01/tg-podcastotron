@@ -62,24 +62,20 @@ func (ms *MultiSelect) deleteMessage(ctx context.Context, b *bot.Bot, update *mo
 	b.UnregisterHandler(ms.callbackHandlerID)
 }
 
-func (ms *MultiSelect) selectItem(ctx context.Context, b *bot.Bot, mes *models.Message, strIdx string) {
+func (ms *MultiSelect) selectItem(ctx context.Context, b *bot.Bot, mes *models.Message, itemID string) {
 	func() {
 		ms.itemsLock.Lock()
 		defer ms.itemsLock.Unlock()
 
 		if ms.onItemSelectedHandler == nil {
-			idx, err := strconv.Atoi(strIdx)
-			if err != nil {
-				ms.onError(fmt.Errorf("failed to parse strIdx %s, %w", strIdx, err))
+			item, ok := ms.itemsMap[itemID]
+			if !ok {
+				ms.onError(fmt.Errorf("item not found: %s", itemID))
 				return
 			}
-			if idx < 0 || idx >= len(ms.items) {
-				ms.onError(fmt.Errorf("invalid index: %d", idx))
-				return
-			}
-			ms.items[idx].Selected = !ms.items[idx].Selected
+			item.Selected = !item.Selected
 		} else {
-			stateChange := ms.onItemSelectedHandler(strIdx)
+			stateChange := ms.onItemSelectedHandler(itemID)
 			if stateChange == nil {
 				return
 			}

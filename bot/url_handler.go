@@ -144,10 +144,11 @@ func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, filepath
 func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStatusChanges []service.EpisodeStatusChange) {
 	userToStatusToChanges := make(map[string]map[service.EpisodeStatus][]service.EpisodeStatusChange)
 	for _, change := range episodeStatusChanges {
-		if _, exists := userToStatusToChanges[change.Episode.UserID]; !exists {
+		if statusToChanges, exists := userToStatusToChanges[change.Episode.UserID]; !exists {
 			userToStatusToChanges[change.Episode.UserID] = make(map[service.EpisodeStatus][]service.EpisodeStatusChange)
+		} else {
+			statusToChanges[change.NewStatus] = append(statusToChanges[change.NewStatus], change)
 		}
-		userToStatusToChanges[change.Episode.UserID][change.NewStatus] = append(userToStatusToChanges[change.Episode.UserID][change.NewStatus], change)
 	}
 
 	for userID, statusToChangesMap := range userToStatusToChanges {
@@ -157,9 +158,9 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 			return
 		}
 
-		if changesCreated, exists := statusToChangesMap[service.EpisodeStatusCreated]; exists && len(changesCreated) > 0 {
+		if createdMap, exists := statusToChangesMap[service.EpisodeStatusCreated]; exists && len(createdMap) > 0 {
 			delete(statusToChangesMap, service.EpisodeStatusCreated)
-			ub.handleEpisodesCreated(ctx, userID, chatID, changesCreated)
+			ub.handleEpisodesCreated(ctx, userID, chatID, createdMap)
 		}
 
 		var otherChanges []service.EpisodeStatusChange
@@ -188,7 +189,7 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 		epIDs = append(epIDs, statusChange.Episode.ID)
 	}
 
-	if err := ub.service.PublishEpisodes(ctx, epIDs, defaultFeed.ID, userID); err != nil {
+	if err := ub.service.PublishEpisodes(ctx, epIDs, []string{defaultFeed.ID}, userID); err != nil {
 		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zap.Error(err))
 	}
 
