@@ -152,8 +152,8 @@ github.com/stretchr/testify v1.6.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
 github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635/go.mod h1:hkRG7XYTFWNJGYcbNJQlaLq0fg1yr4J4t/NcTQtrfww=
-github.com/taylorchu/work v0.2.10 h1:PYHrOaKOh+1hw3Ei2d4sqHgg2zE+UNuKeX1YKNaERNs=
-github.com/taylorchu/work v0.2.10/go.mod h1:Zfly8+DneLpJFKS0RjmEuLQw+RfBrePY3K1YezlYYog=
+github.com/taylorchu/work v0.2.11 h1:ia83RgLQfSujmWxIgdRwMyouRiRQ3AWLECTtYkL++bA=
+github.com/taylorchu/work v0.2.11/go.mod h1:hKfpTU4FyRKFyKv8+XrFVopuUZHCphDPzshJak4YtSg=
 github.com/testcontainers/testcontainers-go v0.18.0 h1:8RXrcIQv5xX/uBOSmZd297gzvA7F0yuRA37/918o7Yg=
 github.com/testcontainers/testcontainers-go v0.18.0/go.mod h1:rLC7hR2SWRjJZZNrUYiTKvUXCziNxzZiYtz9icTWYNQ=
 github.com/urfave/cli v1.22.1/go.mod h1:Gos4lmkARVdJ6EkW0WaNv/tZAAMe9V7XWyB60NtXRu0=
