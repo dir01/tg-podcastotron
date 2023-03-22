@@ -89,6 +89,8 @@ var (
 	ErrCannotDeleteDefaultFeed = fmt.Errorf("cannot delete default feed")
 )
 
+const maxPollEpisodesRequeueCount = 100
+
 func New(
 	mediaSvc mediary.Service,
 	repository *Repository,
@@ -682,8 +684,12 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		zapFields := append([]zap.Field{zap.String("episodeID", ep.ID), zap.String("mediaryID", ep.MediaryID)}, zapFields...)
 		jstat, exists := jobStatusMap[ep.MediaryID]
 		if !exists {
-			svc.logger.Warn("mediary job status not found", zapFields...)
-			episodeIDsToRequeue = append(episodeIDsToRequeue, ep.ID)
+			if payload.RequeueCount < maxPollEpisodesRequeueCount {
+				svc.logger.Warn("mediary job status not found", zapFields...)
+				episodeIDsToRequeue = append(episodeIDsToRequeue, ep.ID)
+			} else {
+				svc.logger.Warn("mediary job status not found, max requeue count reached", zapFields...)
+			}
 			continue
 		}
 
@@ -755,6 +761,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			PollingStartedAt: payload.PollingStartedAt,
 			Delay:            payload.Delay,
 			PollAfter:        payload.PollAfter,
+			RequeueCount:     payload.RequeueCount + 1,
 		}
 
 		now := time.Now()
@@ -763,8 +770,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		}
 		if newPayload.Delay != nil {
 			newDelay := time.Duration(float64(*newPayload.Delay) * 1.1)
-			if newDelay > 5*time.Minute {
-				newDelay = 5 * time.Minute
+			if newDelay > 60*time.Minute {
+				newDelay = 60 * time.Minute
 			}
 			newPayload.Delay = &newDelay
 		} else {

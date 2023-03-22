@@ -22,6 +22,7 @@ type PollEpisodesStatusQueuePayload struct {
 	PollingStartedAt *time.Time
 	Delay            *time.Duration
 	PollAfter        *time.Time
+	RequeueCount     int
 }
 
 type RegenerateFeedQueuePayload struct {
