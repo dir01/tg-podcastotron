@@ -23,11 +23,11 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 	feedID := ub.parseListFeedsCmd(update.Message.Text)
 
 	zapFields := []zap.Field{
-		zap.Int64("chatID", chatID),
-		zap.String("messageText", update.Message.Text),
-		zap.String("userID", userID),
+		zap.Int64("chat_id", chatID),
+		zap.String("message_text", update.Message.Text),
+		zap.String("user_id", userID),
 		zap.String("username", ub.extractUsername(update)),
-		zap.String("feedID", feedID),
+		zap.String("feed_id", feedID),
 	}
 
 	feeds, err := ub.service.ListFeeds(ctx, userID)

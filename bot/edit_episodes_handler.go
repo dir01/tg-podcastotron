@@ -24,7 +24,7 @@ or
 <b>Possible actions:</b>
 - <b>Rename Episodes</b> - rename episodes. Use <code>%n</code> as placeholder for number as extracted from original name
 - <b>Manage Episodes Feeds</b> - add or remove episodes from feeds
-- <b>Delete Episodes</b> - delete episodes from your library, remove them from feeds and delete their files from disk
+- <b>Delete Episodes</b> - delete episodes from your library, remove them from feeds and delete files from cloud storage
 `
 
 func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -32,9 +32,9 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	chatID := ub.extractChatID(update)
 
 	zapFields := []zap.Field{
-		zap.Int64("chatID", chatID),
-		zap.String("messageText", update.Message.Text),
-		zap.String("userID", userID),
+		zap.Int64("chat_id", chatID),
+		zap.String("message_text", update.Message.Text),
+		zap.String("user_id", userID),
 		zap.String("username", ub.extractUsername(update)),
 	}
 
@@ -45,11 +45,12 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			Text:      editEpisodesHelp,
 			ParseMode: models.ParseModeHTML,
 		}); err != nil {
-			ub.logger.Error("sendTextMessage error", append([]zap.Field{zap.Error(err)}, zapFields...)...)
+			zapFields := append(zapFields, zaperr.ToField(err))
+			ub.logger.Error("sendTextMessage error", zapFields...)
 		}
 		return
 	}
-	zapFields = append(zapFields, zap.Strings("episodeIDs", epIDs))
+	zapFields = append(zapFields, zap.Strings("episode_ids", epIDs))
 
 	episodesMap, err := ub.service.GetEpisodesMap(ctx, epIDs, userID)
 	if err != nil {
@@ -110,7 +111,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			ChatID:    chatID,
 			MessageID: initialMsg.ID,
 		}); err != nil {
-			zapFields := append([]zap.Field{zap.Error(err)}, zapFields...)
+			zapFields := append(zapFields, zaperr.ToField(err))
 			ub.logger.Error("failed to delete initial message", zapFields...)
 		}
 	}
@@ -143,7 +144,8 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 						}
 
 						if _, err = ub.bot.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: renamePromptMsg.ID}); err != nil {
-							ub.logger.Error("failed to delete rename prompt message", append([]zap.Field{zap.Error(err)}, zapFields...)...)
+							zapFields := append(zapFields, zaperr.ToField(err))
+							ub.logger.Error("failed to delete rename prompt message", zapFields...)
 						}
 
 						msgTextParts := []string{fmt.Sprintf("%d episodes were renamed", len(epIDs))}

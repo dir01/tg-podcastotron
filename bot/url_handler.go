@@ -24,10 +24,10 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 	userID := ub.extractUserID(update)
 
 	zapFields := []zap.Field{
-		zap.Int64("chatID", chatID),
-		zap.String("userID", userID),
+		zap.Int64("chat_id", chatID),
+		zap.String("user_id", userID),
 		zap.String("username", ub.extractUsername(update)),
-		zap.String("messageText", update.Message.Text),
+		zap.String("message_text", update.Message.Text),
 	}
 
 	if update == nil || update.Message == nil {
@@ -52,14 +52,14 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 
 	zapFields = append(zapFields, zap.Any("metadata", metadata))
 
-	var paths []string
-	for _, file := range metadata.Files {
-		paths = append(paths, file.Path)
+	var variants []string
+	for _, file := range metadata.Variants {
+		variants = append(variants, file.ID)
 	}
 
 	kb := treemultiselect.New(
 		ub.bot,
-		paths,
+		variants,
 		nil, // onConfirmSelection is not needed if WithDynamicActionButtons is set
 		treemultiselect.WithMaxNodesPerPage(10),
 		treemultiselect.WithDynamicFilterButtons(func(selectedNodes []*treemultiselect.TreeNode) []treemultiselect.FilterButton {
@@ -97,7 +97,7 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 			default:
 				return [][]treemultiselect.ActionButton{
 					{treemultiselect.NewConfirmButton(
-						"1 File - 1 Episode",
+						fmt.Sprintf("%d Episodes", len(selectedNodes)),
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 							episodesPaths := make([][]string, len(paths))
 							for i, path := range paths {
@@ -107,7 +107,7 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 						},
 					)},
 					{treemultiselect.NewConfirmButton(
-						fmt.Sprintf("%d Files - 1 Episode", len(selectedNodes)),
+						"1 Episode",
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 							ub.createEpisodes(ctx, url, [][]string{paths}, mes.Chat.ID, userID)
 						},
@@ -129,14 +129,14 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 	}
 }
 
-func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, filepaths [][]string, chatID int64, userID string) {
-	if err := ub.service.CreateEpisodesAsync(ctx, url, filepaths, userID); err != nil {
+func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, variants [][]string, chatID int64, userID string) {
+	if err := ub.service.CreateEpisodesAsync(ctx, url, variants, userID); err != nil {
 		ub.handleError(ctx, chatID, zaperr.Wrap(
 			err, "failed to enqueue episodes creation",
-			zap.Int64("chatID", chatID),
-			zap.String("userID", userID),
+			zap.Int64("chat_id", chatID),
+			zap.String("user_id", userID),
 			zap.String("url", url),
-			zap.Any("filepaths", filepaths),
+			zap.Any("variants", variants),
 		))
 	}
 }
@@ -153,7 +153,7 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 	for userID, statusToChangesMap := range userToStatusToChanges {
 		chatID, err := ub.store.GetChatID(ctx, userID) // TODO: change to bulk get
 		if err != nil {
-			ub.handleError(ctx, 0, zaperr.Wrap(err, "failed to get chatID", zap.String("userID", userID)))
+			ub.handleError(ctx, 0, zaperr.Wrap(err, "failed to get chatID", zap.String("user_id", userID)))
 			return
 		}
 
@@ -174,8 +174,8 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 
 func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string, chatID int64, changes []service.EpisodeStatusChange) {
 	zapFields := []zap.Field{
-		zap.String("userID", userID),
-		zap.Int64("chatID", chatID),
+		zap.String("user_id", userID),
+		zap.Int64("chat_id", chatID),
 	}
 
 	defaultFeed, err := ub.service.DefaultFeed(ctx, userID)
@@ -189,12 +189,12 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 	}
 
 	if err := ub.service.PublishEpisodes(ctx, epIDs, []string{defaultFeed.ID}, userID); err != nil {
-		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zap.Error(err))
+		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zaperr.ToField(err))
 	}
 
 	message, err := formatEpisodesCreatedMessage(epIDs, defaultFeed)
 	if err != nil {
-		ub.logger.Error("failed to format episodes created message", zap.Error(err))
+		ub.logger.Error("failed to format episodes created message", zaperr.ToField(err))
 		message = "Accepted"
 	}
 	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
@@ -204,9 +204,9 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 		ReplyMarkup: nil,
 	}); err != nil {
 		ub.logger.Error("failed to send message",
-			zap.String("userID", userID),
-			zap.Int64("chatID", chatID),
-			zap.Error(err),
+			zap.String("user_id", userID),
+			zap.Int64("chat_id", chatID),
+			zaperr.ToField(err),
 		)
 	}
 }
@@ -258,7 +258,7 @@ func getNTopExtensions(selectedNodes []*treemultiselect.TreeNode, n int) []strin
 	for _, n := range selectedNodes {
 		extCounter[strings.TrimPrefix(filepath.Ext(n.Value), ".")]++
 	}
-	delete(extCounter, "") // no-extension files
+	delete(extCounter, "") // files without extension don't interest us
 
 	var topExts []string
 	for i := 0; i < n; i++ {

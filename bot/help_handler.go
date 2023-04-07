@@ -2,10 +2,10 @@ package bot
 
 import (
 	"context"
+	"github.com/hori-ryota/zaperr"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"go.uber.org/zap"
 )
 
 const helpMessage = `
@@ -42,7 +42,7 @@ func (ub *UndercastBot) helpHandler(ctx context.Context, _ *bot.Bot, update *mod
 		Text:      helpMessage,
 		ParseMode: models.ParseModeHTML,
 	}); err != nil {
-		ub.logger.Error("sendTextMessage error", zap.Error(err))
+		ub.logger.Error("sendTextMessage error", zaperr.ToField(err))
 	}
 
 }

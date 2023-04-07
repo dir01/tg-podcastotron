@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/hori-ryota/zaperr"
 	"os"
 	"os/signal"
 
@@ -56,16 +57,16 @@ func main() {
 	mkRedisClient := func(url string) (client *redis.Client, teardown func()) {
 		opt, err := redis.ParseURL(url)
 		if err != nil {
-			logger.Fatal("error parsing redis url", zap.Error(err))
+			logger.Fatal("error parsing redis url", zaperr.ToField(err))
 		}
 		redisClient := redis.NewClient(opt)
 		if _, err := redisClient.Ping(ctx).Result(); err != nil {
-			logger.Fatal("error connecting to redis", zap.Error(err))
+			logger.Fatal("error connecting to redis", zaperr.ToField(err))
 		}
 		return redisClient, func() {
 			err := redisClient.Close()
 			if err != nil {
-				logger.Error("error closing redis client", zap.Error(err))
+				logger.Error("error closing redis client", zaperr.ToField(err))
 			}
 		}
 	}
@@ -87,7 +88,7 @@ func main() {
 		}),
 	)
 	if err != nil {
-		logger.Fatal("error creating s3 config", zap.Error(err))
+		logger.Fatal("error creating s3 config", zaperr.ToField(err))
 	}
 
 	if endpoint := os.Getenv("AWS_ENDPOINT"); endpoint != "" {
@@ -106,13 +107,13 @@ func main() {
 			LocationConstraint: types.BucketLocationConstraint(awsRegion),
 		},
 	})
-	logger.Debug("created bucket", zap.String("bucket", awsBucketName), zap.Error(err))
+	logger.Debug("created bucket", zap.String("bucket", awsBucketName), zaperr.ToField(err))
 	// endregion
 
 	// region jobs queue
 	jobsQueue, err := jobsqueue.NewRedisJobsQueue(bgJobsRedisClient, 2, "undercast:jobs", logger)
 	if err != nil {
-		logger.Fatal("error creating jobs queue", zap.Error(err))
+		logger.Fatal("error creating jobs queue", zaperr.ToField(err))
 	}
 	// endregion
 
@@ -130,6 +131,6 @@ func main() {
 	botAuthService := auth.New(adminUsername, authRepo, logger)
 	ubot := bot.NewUndercastBot(botToken, botAuthService, botStore, svc, logger)
 	if err := ubot.Start(ctx); err != nil {
-		logger.Fatal("error starting bot", zap.Error(err))
+		logger.Fatal("error starting bot", zaperr.ToField(err))
 	}
 }

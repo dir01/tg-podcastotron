@@ -3,11 +3,11 @@ package bot
 import (
 	"context"
 	"fmt"
+	"github.com/hori-ryota/zaperr"
 	"net/url"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"go.uber.org/zap"
 )
 
 var sentMenusCache = make(map[string]bool) // TODO: cache invalidation
@@ -44,7 +44,7 @@ func (ub *UndercastBot) setMenuMiddleware(next bot.HandlerFunc) bot.HandlerFunc 
 
 		if !sentMenusCache[cacheKey] {
 			if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands}); err != nil {
-				ub.logger.Error("setMenuMiddleware error", zap.Error(err))
+				ub.logger.Error("setMenuMiddleware error", zaperr.ToField(err))
 			}
 			sentMenusCache[cacheKey] = true
 		}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hori-ryota/zaperr"
 	"net/http"
 	"sync"
 	"time"
@@ -33,14 +34,15 @@ type service struct {
 }
 
 type Metadata struct {
-	URL   string         `json:"url"`
-	Name  string         `json:"name"`
-	Files []FileMetadata `json:"files"`
+	URL                   string    `json:"url"`
+	Name                  string    `json:"name"`
+	Variants              []Variant `json:"variants"`
+	AllowMultipleVariants bool      `json:"allow_multiple_variants"`
 }
 
-type FileMetadata struct {
-	Path     string `json:"path"`
-	LenBytes int64  `json:"length_bytes"`
+type Variant struct {
+	ID       string `json:"id"`
+	LenBytes *int64 `json:"length_bytes"`
 }
 
 type CreateUploadJobParams struct {
@@ -54,7 +56,7 @@ type JobType string
 var JobTypeConcatenate JobType = "concatenate"
 
 type ConcatenateJobParams struct {
-	Filepaths  []string `json:"filepaths"`
+	Variants   []string `json:"variants"`
 	AudioCodec string   `json:"audioCodec"`
 	UploadURL  string   `json:"uploadUrl"`
 }
@@ -172,17 +174,17 @@ func (svc *service) FetchJobStatusMap(ctx context.Context, jobIDs []string) (map
 			svc.logger.Debug("fetching job status", zap.String("url", fullURL))
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 			if err != nil {
-				svc.logger.Error("failed to create request", zap.Error(err))
+				svc.logger.Error("failed to create request", zaperr.ToField(err))
 				return
 			}
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
-				svc.logger.Error("failed to call mediary API", zap.Error(err))
+				svc.logger.Error("failed to call mediary API", zaperr.ToField(err))
 				return
 			}
 			var jobStatus JobStatus
 			if err := json.NewDecoder(resp.Body).Decode(&jobStatus); err != nil {
-				svc.logger.Error("error decoding mediary response", zap.Error(err))
+				svc.logger.Error("error decoding mediary response", zaperr.ToField(err))
 				return
 			}
 			jobStatusChan <- &jobStatus

@@ -35,14 +35,14 @@ func (ub *UndercastBot) newFeedHandler(ctx context.Context, b *bot.Bot, update *
 				userID := ub.extractUserID(update)
 				feed, err := ub.service.CreateFeed(ctx, userID, feedTitle)
 				if err != nil {
-					zFields := append([]zap.Field{zap.String("feed_title", feedTitle)}, zapFields...)
-					ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to create feed", zFields...))
+					zapFields := append(zapFields, zap.String("feed_title", feedTitle))
+					ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to create feed", zapFields...))
 					return
 				}
 
 				if _, err = ub.bot.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: feedNamePromptMsg.ID}); err != nil {
-					zFields := append([]zap.Field{zap.Error(err)}, zapFields...)
-					ub.logger.Error("failed to delete feed name prompt message", zFields...)
+					zapFields := append(zapFields, zaperr.ToField(err))
+					ub.logger.Error("failed to delete feed name prompt message", zapFields...)
 				}
 
 				statusMsg := fmt.Sprintf("Feed was created:\n\n%s", ub.renderFeedShort(feed))
@@ -52,7 +52,7 @@ func (ub *UndercastBot) newFeedHandler(ctx context.Context, b *bot.Bot, update *
 					Text:      statusMsg,
 					ParseMode: models.ParseModeHTML,
 				}); err != nil {
-					zFields := append(zapFields, zap.Any("message", statusMsg))
+					zFields := append(zapFields, zap.String("message", statusMsg))
 					ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zFields...))
 					return
 				}

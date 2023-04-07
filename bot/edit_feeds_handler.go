@@ -27,9 +27,9 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 	userID := ub.extractUserID(update)
 
 	zapFields := []zap.Field{
-		zap.Int64("chatID", chatID),
-		zap.String("userID", userID),
-		zap.String("messageText", update.Message.Text),
+		zap.Int64("chat_id", chatID),
+		zap.String("user_id", userID),
+		zap.String("message_text", update.Message.Text),
 	}
 
 	feedID, err := ub.parseEditFeedsCmd(update.Message.Text)
@@ -39,13 +39,13 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 			Text:      editFeedsHelp,
 			ParseMode: models.ParseModeHTML,
 		}); err != nil {
-			zapFields := append([]zap.Field{zap.Error(err)}, zapFields...)
+			zapFields := append(zapFields, zaperr.ToField(err))
 			ub.logger.Error("sendTextMessage error", zapFields...)
 		}
 		return
 	}
 
-	zapFields = append(zapFields, zap.String("feedID", feedID))
+	zapFields = append(zapFields, zap.String("feed_id", feedID))
 
 	prefix := fmt.Sprintf("editFeed_%s_%s", userID, bot.RandomString(10))
 	cmdRename := "rename"
@@ -118,7 +118,8 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 						}
 
 						if _, err = ub.bot.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: renamePromptMsg.ID}); err != nil {
-							ub.logger.Error("failed to delete rename prompt message", append([]zap.Field{zap.Error(err)}, zapFields...)...)
+							zapFields := append(zapFields, zaperr.ToField(err))
+							ub.logger.Error("failed to delete rename prompt message", zapFields...)
 						}
 
 						ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed %s was renamed to \"%s\"", feedID, newTitle))

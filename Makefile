@@ -4,7 +4,7 @@ build:
 run:
 	go run ./cmd/bot
 
-run_all: docker-compose-up run-server
+run_all: docker-compose-up run
 
 test:
 	go test -v ./...

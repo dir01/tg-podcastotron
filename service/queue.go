@@ -11,9 +11,10 @@ const (
 )
 
 type CreateEpisodesQueuePayload struct {
-	URL    string
-	Paths  [][]string
-	UserID string
+	URL string
+	// VariantsPerEpisode is a slice of slices of variants. Each slice represents an episode. Each episode can have multiple variants.
+	VariantsPerEpisode [][]string
+	UserID             string
 }
 
 type PollEpisodesStatusQueuePayload struct {

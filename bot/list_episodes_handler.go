@@ -24,11 +24,11 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	epID := ub.parseListEpisodesCmd(update.Message.Text)
 
 	zapFields := []zap.Field{
-		zap.Int64("chatID", chatID),
-		zap.String("messageText", update.Message.Text),
-		zap.String("userID", userID),
+		zap.Int64("chat_id", chatID),
+		zap.String("message_text", update.Message.Text),
+		zap.String("user_id", userID),
 		zap.String("username", ub.extractUsername(update)),
-		zap.String("episodeID", epID),
+		zap.String("episode_id", epID),
 	}
 
 	var err error

@@ -25,7 +25,7 @@ func NewRedisJobsQueue(redisClient *redis.Client, concurrency int, namespace str
 			Namespace: namespace,
 			Queue:     work2.NewRedisQueue(redisClient),
 			ErrorFunc: func(err error) {
-				logger.Error("failed to handle job", zap.Error(err))
+				logger.Error("failed to handle job", zaperr.ToField(err))
 			},
 		}),
 		namespace:   namespace,
@@ -69,6 +69,6 @@ func (r *RJQ) Subscribe(ctx context.Context, jobType string, f func(payloadBytes
 		NumGoroutines:    int64(r.concurrency),
 	})
 	if err != nil {
-		r.logger.Error("failed to register job", zap.Error(err))
+		r.logger.Error("failed to register job", zaperr.ToField(err))
 	}
 }

@@ -141,19 +141,19 @@ func (svc *Service) FetchMetadata(ctx context.Context, mediaURL string) (*Metada
 	}, metadataDelays...)
 }
 
-func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, filepaths [][]string, userID string) error {
+func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, variantsPerEpisode [][]string, userID string) error {
 	zapFields := []zap.Field{
 		zap.String("url", url),
-		zap.Any("filepaths", filepaths),
-		zap.String("userID", userID),
+		zap.Any("variants_per_episode", variantsPerEpisode),
+		zap.String("user_id", userID),
 	}
 
 	svc.logger.Info("queueing episodes creation", zapFields...)
 
 	if err := svc.jobsQueue.Publish(ctx, createEpisodes, &CreateEpisodesQueuePayload{
-		URL:    url,
-		Paths:  filepaths,
-		UserID: userID,
+		URL:                url,
+		VariantsPerEpisode: variantsPerEpisode,
+		UserID:             userID,
 	}); err != nil {
 		return zaperr.Wrap(err, "failed to enqueue episodes creation", zapFields...)
 	}
@@ -161,16 +161,16 @@ func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, filepat
 	return nil
 }
 
-func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepaths []string, userID string) (*Episode, error) {
+func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, variants []string, userID string) (*Episode, error) {
 	filename := uuid.New().String() + ".mp3" // TODO: implement more elaborate filename generation
 	episodeKey := path.Join(svc.getUserKeyPrefix(userID), "episodes", filename)
 
 	zapFields := []zap.Field{
-		zap.String("mediaURL", mediaURL),
-		zap.Strings("filepaths", filepaths),
+		zap.String("media_url", mediaURL),
+		zap.Strings("variants", variants),
 		zap.String("filename", filename),
-		zap.String("userID", userID),
-		zap.String("episodeKey", episodeKey),
+		zap.String("user_id", userID),
+		zap.String("episode_key", episodeKey),
 	}
 
 	presignURL, err := svc.s3Store.PreSignedURL(episodeKey)
@@ -182,7 +182,7 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 		URL:  mediaURL,
 		Type: mediary.JobTypeConcatenate,
 		Params: mediary.ConcatenateJobParams{
-			Filepaths: filepaths,
+			Variants:  variants,
 			UploadURL: presignURL,
 		},
 	})
@@ -190,7 +190,7 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 		return nil, zaperr.Wrap(err, "failed to create mediary job", zapFields...)
 	}
 
-	episodeTitle := titleFromFilepaths(filepaths)
+	episodeTitle := titleFromFilepaths(variants)
 	if episodeTitle == "" {
 		episodeTitle = titleFromSourceURL(mediaURL)
 	} else {
@@ -201,7 +201,7 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, filepath
 		Title:           episodeTitle,
 		UserID:          userID,
 		SourceURL:       mediaURL,
-		SourceFilepaths: filepaths,
+		SourceFilepaths: variants,
 		StorageKey:      episodeKey,
 		URL:             stripQuery(presignURL),
 		MediaryID:       mediaryID,
@@ -231,7 +231,7 @@ func (svc *Service) ListEpisodes(ctx context.Context, userID string) ([]*Episode
 	if episodes, err := svc.repository.ListUserEpisodes(ctx, userID); err == nil {
 		return episodes, nil
 	} else {
-		return nil, zaperr.Wrap(err, "failed to list user episodes", zap.String("userID", userID))
+		return nil, zaperr.Wrap(err, "failed to list user episodes", zap.String("user_id", userID))
 	}
 }
 
@@ -239,7 +239,7 @@ func (svc *Service) GetEpisodesMap(ctx context.Context, ids []string, userID str
 	if episodes, err := svc.repository.GetEpisodesMap(ctx, ids, userID); err == nil {
 		return episodes, nil
 	} else {
-		return nil, zaperr.Wrap(ErrEpisodeNotFound, "failed to get episodes map", zap.Strings("ids", ids), zap.Error(err))
+		return nil, zaperr.Wrap(ErrEpisodeNotFound, "failed to get episodes map", zap.Strings("ids", ids), zaperr.ToField(err))
 	}
 }
 
@@ -272,7 +272,7 @@ func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, erro
 func (svc *Service) GetFeedsMap(ctx context.Context, feedIDs []string, userID string) (map[string]*Feed, error) {
 	feeds, err := svc.repository.GetFeedsMap(ctx, feedIDs, userID)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get feeds map", zap.Strings("feedIDs", feedIDs))
+		return nil, zaperr.Wrap(err, "failed to get feeds map", zap.Strings("feed_ids", feedIDs))
 	}
 	return feeds, nil
 }
@@ -302,9 +302,9 @@ func (svc *Service) CreateFeed(ctx context.Context, userID string, title string)
 
 func (svc *Service) PublishEpisodes(ctx context.Context, episodeIDs []string, feedIDs []string, userID string) error {
 	zapFields := []zap.Field{
-		zap.Strings("episodeIDs", episodeIDs),
-		zap.Strings("feedIDs", feedIDs),
-		zap.String("userID", userID),
+		zap.Strings("episode_ids", episodeIDs),
+		zap.Strings("feed_ids", feedIDs),
+		zap.String("user_id", userID),
 	}
 
 	episodes := make([]*Episode, 0, len(episodeIDs))
@@ -404,9 +404,9 @@ func (svc *Service) PublishEpisodes(ctx context.Context, episodeIDs []string, fe
 
 func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitlePattern string, userID string) error {
 	zapFields := []zap.Field{
-		zap.Strings("episodeIDs", epIDs),
-		zap.String("newTitlePattern", newTitlePattern),
-		zap.String("userID", userID),
+		zap.Strings("episode_ids", epIDs),
+		zap.String("new_title_pattern", newTitlePattern),
+		zap.String("user_id", userID),
 	}
 
 	episodesMap, err := svc.repository.GetEpisodesMap(ctx, epIDs, userID)
@@ -443,8 +443,8 @@ func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitle
 
 func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID string) error {
 	zapFields := []zap.Field{
-		zap.Strings("episodeIDs", epIDs),
-		zap.String("userID", userID),
+		zap.Strings("episode_ids", epIDs),
+		zap.String("user_id", userID),
 	}
 
 	episodesMap, err := svc.GetEpisodesMap(ctx, epIDs, userID)
@@ -460,7 +460,7 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID s
 	}
 	feedIDs := maps.Keys(feedIDsMap)
 
-	zapFields = append(zapFields, zap.Strings("feedIDs", feedIDs))
+	zapFields = append(zapFields, zap.Strings("feed_ids", feedIDs))
 
 	feedsMap, err := svc.repository.GetFeedsMap(ctx, feedIDs, userID)
 	if err != nil {
@@ -487,14 +487,14 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID s
 
 func (svc *Service) RenameFeed(ctx context.Context, feedID string, userID string, newTitle string) error {
 	zapFields := []zap.Field{
-		zap.String("feedID", feedID),
-		zap.String("userID", userID),
-		zap.String("newTitle", newTitle),
+		zap.String("feed_id", feedID),
+		zap.String("user_id", userID),
+		zap.String("new_title", newTitle),
 	}
 
 	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
 	if err != nil {
-		zapFields := append(zapFields, zap.Error(err))
+		zapFields := append(zapFields, zaperr.ToField(err))
 		return zaperr.Wrap(ErrFeedNotFound, "", zapFields...)
 	}
 
@@ -515,9 +515,9 @@ func (svc *Service) RenameFeed(ctx context.Context, feedID string, userID string
 
 func (svc *Service) DeleteFeed(ctx context.Context, feedID string, userID string, deleteEpisodes bool) error {
 	zapFields := []zap.Field{
-		zap.String("feedID", feedID),
-		zap.String("userID", userID),
-		zap.Bool("deleteEpisodes", deleteEpisodes),
+		zap.String("feed_id", feedID),
+		zap.String("user_id", userID),
+		zap.Bool("delete_episodes", deleteEpisodes),
 	}
 
 	if feedID == strconv.Itoa(DefaultFeedID) {
@@ -589,14 +589,14 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 
 	zapFields := []zap.Field{
 		zap.String("url", payload.URL),
-		zap.Any("filepaths", payload.Paths),
+		zap.Any("variants_per_episode", payload.VariantsPerEpisode),
 	}
 
 	svc.logger.Info("creating queued episodes", zapFields...)
 
 	var createdEpisodes []*Episode
-	for _, ePaths := range payload.Paths {
-		episode, err := svc.CreateEpisode(ctx, payload.URL, ePaths, payload.UserID)
+	for _, variants := range payload.VariantsPerEpisode {
+		episode, err := svc.CreateEpisode(ctx, payload.URL, variants, payload.UserID)
 		if err != nil {
 			return zaperr.Wrap(err, "failed to create single file episode", zapFields...)
 		}
@@ -612,7 +612,8 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 		EpisodeIDs: episodeIDs,
 		UserID:     payload.UserID,
 	}); err != nil {
-		svc.logger.Error("failed to enqueue episode status polling", append([]zap.Field{zap.Strings("episodeIDs", episodeIDs)}, zapFields...)...)
+		zapFields := append(zapFields, zap.Strings("episode_ids", episodeIDs), zaperr.ToField(err))
+		svc.logger.Error("failed to enqueue episode status polling", zapFields...)
 	}
 
 	episodesStatusChanges := make([]EpisodeStatusChange, len(createdEpisodes))
@@ -635,17 +636,16 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	}
 
 	zapFields := []zap.Field{
-		zap.Strings("episodeIDs", payload.EpisodeIDs),
-		zap.String("userID", payload.UserID),
-		zap.Any("pollAfter", payload.PollAfter),
+		zap.Strings("episode_ids", payload.EpisodeIDs),
+		zap.String("user_id", payload.UserID),
+		zap.Timep("poll_after", payload.PollAfter),
 	}
 
 	if payload.PollAfter != nil {
 		sleepDuration := time.Until(*payload.PollAfter)
 		if sleepDuration > 0 {
-			svc.logger.Debug("sleeping before polling episodes", append([]zap.Field{
-				zap.Duration("sleepDuration", sleepDuration),
-			}, zapFields...)...)
+			zapFields := append(zapFields, zap.Duration("sleep_duration", sleepDuration))
+			svc.logger.Debug("sleeping before polling episodes", zapFields...)
 			select {
 			case <-time.After(sleepDuration):
 			case <-ctx.Done():
@@ -674,14 +674,15 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 	jobStatusMap, err := svc.mediaSvc.FetchJobStatusMap(ctx, mediaryIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to fetch job status", append([]zap.Field{zap.Strings("mediaryIDs", mediaryIDs)}, zapFields...)...)
+		zapFields := append(zapFields, zap.Strings("mediary_ids", mediaryIDs))
+		return zaperr.Wrap(err, "failed to fetch job status", zapFields...)
 	}
 
 	episodesStateChanges := make([]EpisodeStatusChange, 0, len(episodesMap))
 	episodesToSave := make([]*Episode, 0, len(episodesMap))
 	episodeIDsToRequeue := make([]string, 0, len(episodesMap))
 	for _, ep := range episodesMap {
-		zapFields := append([]zap.Field{zap.String("episodeID", ep.ID), zap.String("mediaryID", ep.MediaryID)}, zapFields...)
+		zapFields := append(zapFields, zap.String("episode_id", ep.ID), zap.String("mediary_id", ep.MediaryID))
 		jstat, exists := jobStatusMap[ep.MediaryID]
 		if !exists {
 			if payload.RequeueCount < maxPollEpisodesRequeueCount {
@@ -695,9 +696,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 		newStatus, err := jobStatusToEpisodeStatus(jstat.Status)
 		if err != nil {
-			return zaperr.Wrap(err, "failed to convert job status to episode status",
-				append([]zap.Field{zap.String("jobStatus", string(jstat.Status))}, zapFields...)...,
-			)
+			zapFields := append(zapFields, zap.String("job_status", string(jstat.Status)))
+			return zaperr.Wrap(err, "failed to convert job status to episode status", zapFields...)
 		}
 
 		if newStatus != EpisodeStatusComplete {
@@ -726,7 +726,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	var episodesSaveError error
 	feedsToPublish := make(map[string]bool)
 	for _, e := range episodesToSave {
-		zapFields := append([]zap.Field{zap.String("episodeID", e.ID)}, zapFields...)
+		zapFields := append(zapFields, zap.String("episode_id", e.ID))
 		if _, err := svc.repository.SaveEpisode(ctx, e); err == nil {
 			for _, f := range e.FeedIDs {
 				feedsToPublish[f] = true
@@ -746,7 +746,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			UserID:  payload.UserID,
 		}); err != nil {
 			// TODO: failure here will leave data in inconsistent state: episodes will be saved but feeds will not be regenerated
-			return zaperr.Wrap(err, "failed to enqueue feed regeneration", append([]zap.Field{zap.Strings("feedIDs", feedIDs)}, zapFields...)...)
+			zapFields := append(zapFields, zap.Strings("feed_ids", feedIDs))
+			return zaperr.Wrap(err, "failed to enqueue feed regeneration", zapFields...)
 		}
 	}
 
@@ -782,7 +783,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		newPayload.PollAfter = &pollAfter
 
 		if err := svc.jobsQueue.Publish(ctx, pollEpisodesStatus, newPayload); err != nil {
-			return zaperr.Wrap(err, "failed to enqueue episode status polling", append([]zap.Field{zap.Strings("episodeIDs", episodeIDsToRequeue)}, zapFields...)...)
+			zapFields := append(zapFields, zap.Strings("episode_ids", episodeIDsToRequeue))
+			return zaperr.Wrap(err, "failed to enqueue episode status polling", zapFields...)
 		}
 	}
 
@@ -796,7 +798,7 @@ func (svc *Service) onRegenerateFeedQueueEvent(ctx context.Context, payloadBytes
 	}
 
 	zapFields := []zap.Field{
-		zap.Strings("feedIDs", payload.FeedIDs),
+		zap.Strings("feed_ids", payload.FeedIDs),
 	}
 
 	svc.logger.Info("regenerating feeds", zapFields...)
@@ -808,7 +810,8 @@ func (svc *Service) onRegenerateFeedQueueEvent(ctx context.Context, payloadBytes
 
 	for _, f := range feedsMap {
 		if err := svc.regenerateFeedFile(ctx, f); err != nil {
-			return zaperr.Wrap(err, "failed to regenerate feed", append([]zap.Field{zap.String("feedID", f.ID)}, zapFields...)...)
+			zapFields := append(zapFields, zap.String("feed_id", f.ID))
+			return zaperr.Wrap(err, "failed to regenerate feed", zapFields...)
 		}
 	}
 
@@ -817,8 +820,8 @@ func (svc *Service) onRegenerateFeedQueueEvent(ctx context.Context, payloadBytes
 
 func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 	zapFields := []zap.Field{
-		zap.String("feedID", feed.ID),
-		zap.String("userID", feed.UserID),
+		zap.String("feed_id", feed.ID),
+		zap.String("user_id", feed.UserID),
 	}
 
 	episodes, err := svc.repository.ListFeedEpisodes(ctx, feed)

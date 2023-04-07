@@ -74,19 +74,9 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 	return nil
 }
 
-type Metadata struct {
-	Name  string         `json:"name"`
-	Files []FileMetadata `json:"files"`
-}
-
-type FileMetadata struct {
-	Path     string `json:"path"`
-	LenBytes int64  `json:"length_bytes"`
-}
-
 func (ub *UndercastBot) handleError(ctx context.Context, chatID int64, err error) {
 	id := uuid.New().String()
-	ub.logger.Error("error", zap.String("id", id), zap.Error(err))
+	ub.logger.Error("error", zap.String("id", id), zaperr.ToField(err))
 	ub.sendTextMessage(ctx, chatID, "An error occurred while processing your request. Please try again later. \nError ID: %s", id)
 }
 
@@ -95,6 +85,6 @@ func (ub *UndercastBot) sendTextMessage(ctx context.Context, chatID int64, messa
 		ChatID: chatID,
 		Text:   fmt.Sprintf(message, args...),
 	}); err != nil {
-		ub.logger.Error("sendTextMessage error", zap.Error(err))
+		ub.logger.Error("sendTextMessage error", zaperr.ToField(err))
 	}
 }
