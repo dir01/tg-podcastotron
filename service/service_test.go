@@ -43,6 +43,12 @@ func TestService(t *testing.T) {
 		CreateUploadJobFunc: func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error) {
 			return "some-job-id", nil
 		},
+		FetchMetadataLongPollingFunc: func(ctx context.Context, mediaURL string) (*mediary.Metadata, error) {
+			return &mediary.Metadata{
+				URL:            mediaURL,
+				DownloaderName: "torrent",
+			}, nil
+		},
 	}
 	mockedS3Store := &servicemocks.MockS3Store{
 		PreSignedURLFunc: func(key string) (string, error) {
