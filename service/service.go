@@ -205,16 +205,29 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, variants
 		return nil, zaperr.Wrap(ErrNotImplemented, "unsupported processing type", zapFields...)
 	}
 
+	metadata, err := svc.FetchMetadata(ctx, mediaURL)
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to fetch metadata", zapFields...)
+	}
+
 	mediaryID, err := svc.mediaSvc.CreateUploadJob(ctx, mediaryParams)
 	if err != nil {
 		return nil, zaperr.Wrap(err, "failed to create mediary job", zapFields...)
 	}
 
-	episodeTitle := titleFromFilepaths(variants)
-	if episodeTitle == "" {
-		episodeTitle = titleFromSourceURL(mediaURL)
-	} else {
-		episodeTitle = fmt.Sprintf("%s - %s", episodeTitle, titleFromSourceURL(mediaURL))
+	var episodeTitle string
+	switch metadata.DownloaderName {
+	case "torrent":
+		episodeTitle = titleFromFilepaths(variants)
+		if episodeTitle == "" {
+			episodeTitle = titleFromSourceURL(mediaURL)
+		} else {
+			episodeTitle = fmt.Sprintf("%s - %s", episodeTitle, titleFromSourceURL(mediaURL))
+		}
+	case "ytdl":
+		episodeTitle = metadata.Name
+	default:
+		return nil, zaperr.Wrap(ErrNotImplemented, "unsupported downloader while generating episode title", zapFields...)
 	}
 
 	ep := &Episode{
