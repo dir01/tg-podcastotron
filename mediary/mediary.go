@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/hori-ryota/zaperr"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -38,6 +39,7 @@ type Metadata struct {
 	Name                  string    `json:"name"`
 	Variants              []Variant `json:"variants"`
 	AllowMultipleVariants bool      `json:"allow_multiple_variants"`
+	DownloaderName        string    `json:"downloader_name"`
 }
 
 type Variant struct {
@@ -46,19 +48,27 @@ type Variant struct {
 }
 
 type CreateUploadJobParams struct {
-	URL    string               `json:"url"`
-	Type   JobType              `json:"type"`
-	Params ConcatenateJobParams `json:"params"`
+	URL    string      `json:"url"`
+	Type   JobType     `json:"type"`
+	Params interface{} `json:"params"`
 }
 
 type JobType string
 
-var JobTypeConcatenate JobType = "concatenate"
+const (
+	JobTypeConcatenate    JobType = "concatenate"
+	JobTypeUploadOriginal JobType = "upload_original"
+)
 
 type ConcatenateJobParams struct {
 	Variants   []string `json:"variants"`
 	AudioCodec string   `json:"audioCodec"`
 	UploadURL  string   `json:"uploadUrl"`
+}
+
+type UploadOriginalJobParams struct {
+	Variant   string `json:"variant"`
+	UploadURL string `json:"uploadUrl"`
 }
 
 type JobStatus struct {
@@ -118,7 +128,11 @@ func (svc *service) FetchMetadataLongPolling(ctx context.Context, mediaURL strin
 	}
 
 	var metadata Metadata
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if err := json.Unmarshal(body, &metadata); err != nil {
 		return nil, fmt.Errorf("error decoding mediary response: %w", err)
 	}
 

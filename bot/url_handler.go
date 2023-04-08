@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"tg-podcastotron/bot/ui/multiselect"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -52,9 +53,28 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 
 	zapFields = append(zapFields, zap.Any("metadata", metadata))
 
+	switch metadata.DownloaderName {
+	case "torrent":
+		if err = ub.startTorrentFlow(ctx, metadata, userID, chatID); err != nil {
+			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to start torrent flow", zapFields...))
+			return
+		}
+	case "ytdl":
+		if err = ub.startYtdlFlow(ctx, metadata, userID, chatID); err != nil {
+			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to start ytdl flow", zapFields...))
+			return
+		}
+	default:
+		ub.sendTextMessage(ctx, chatID, "Unsupported downloader: %s", metadata.DownloaderName)
+		return
+	}
+
+}
+
+func (ub *UndercastBot) startTorrentFlow(ctx context.Context, metadata *service.Metadata, userID string, chatID int64) error {
 	var variants []string
-	for _, file := range metadata.Variants {
-		variants = append(variants, file.ID)
+	for _, v := range metadata.Variants {
+		variants = append(variants, v.ID)
 	}
 
 	kb := treemultiselect.New(
@@ -89,7 +109,7 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 					{treemultiselect.NewConfirmButton(
 						"Create Episode",
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
-							ub.createEpisodes(ctx, url, [][]string{{paths[0]}}, mes.Chat.ID, userID)
+							ub.createEpisodes(ctx, metadata.URL, [][]string{{paths[0]}}, service.ProcessingTypeUploadOriginal, mes.Chat.ID, userID)
 						},
 					)},
 					{cancelBtn},
@@ -103,13 +123,13 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 							for i, path := range paths {
 								episodesPaths[i] = []string{path}
 							}
-							ub.createEpisodes(ctx, url, episodesPaths, mes.Chat.ID, userID)
+							ub.createEpisodes(ctx, metadata.URL, episodesPaths, service.ProcessingTypeUploadOriginal, mes.Chat.ID, userID)
 						},
 					)},
 					{treemultiselect.NewConfirmButton(
 						"1 Episode",
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
-							ub.createEpisodes(ctx, url, [][]string{paths}, mes.Chat.ID, userID)
+							ub.createEpisodes(ctx, metadata.URL, [][]string{paths}, service.ProcessingTypeConcatenate, mes.Chat.ID, userID)
 						},
 					)},
 					{cancelBtn},
@@ -123,14 +143,53 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 		Text:        "Please choose which files to include in the episode",
 		ReplyMarkup: kb,
 	}); err != nil {
-		zapFields = append(zapFields, zap.Any("message", msg))
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
-		return
+		return zaperr.Wrap(err, "failed to send message", zap.Any("message", msg))
 	}
+
+	return nil
 }
 
-func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, variants [][]string, chatID int64, userID string) {
-	if err := ub.service.CreateEpisodesAsync(ctx, url, variants, userID); err != nil {
+func (ub *UndercastBot) startYtdlFlow(ctx context.Context, metadata *service.Metadata, userID string, chatID int64) error {
+	items := make([]*multiselect.Item, len(metadata.Variants))
+	for i, v := range metadata.Variants {
+		items[i] = &multiselect.Item{ID: v.ID, Text: v.ID}
+	}
+
+	kb := multiselect.New(
+		ub.bot,
+		items,
+		func(ctx context.Context, bot *bot.Bot, mes *models.Message, items []*multiselect.Item) {
+			var variant string
+			for _, item := range items {
+				if item.Selected {
+					variant = item.ID
+					break
+				}
+			}
+			ub.createEpisodes(ctx, metadata.URL, [][]string{{variant}}, service.ProcessingTypeUploadOriginal, mes.Chat.ID, userID)
+		},
+		multiselect.WithOnItemSelectedHandler(func(itemID string) *multiselect.StateChange {
+			for _, v := range items {
+				v.Selected = v.ID == itemID
+			}
+			return &multiselect.StateChange{Items: items}
+		}),
+		multiselect.WithItemFilters(),
+	)
+
+	if msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        "Please choose variant",
+		ReplyMarkup: kb,
+	}); err != nil {
+		return zaperr.Wrap(err, "failed to send message", zap.Any("message", msg))
+	}
+
+	return nil
+}
+
+func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, variants [][]string, processingType service.ProcessingType, chatID int64, userID string) {
+	if err := ub.service.CreateEpisodesAsync(ctx, url, variants, processingType, userID); err != nil {
 		ub.handleError(ctx, chatID, zaperr.Wrap(
 			err, "failed to enqueue episodes creation",
 			zap.Int64("chat_id", chatID),

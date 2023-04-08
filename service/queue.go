@@ -5,9 +5,16 @@ import (
 )
 
 const (
-	createEpisodes     = "create_episodes"
-	pollEpisodesStatus = "poll_episodes_status"
-	regenerateFeed     = "regenerate_feed"
+	queueEventCreateEpisodes     = "create_episodes"
+	queueEventPollEpisodesStatus = "poll_episodes_status"
+	queueEventRegenerateFeed     = "regenerate_feed"
+)
+
+type ProcessingType string
+
+const (
+	ProcessingTypeConcatenate    ProcessingType = "concatenate"
+	ProcessingTypeUploadOriginal ProcessingType = "upload_original"
 )
 
 type CreateEpisodesQueuePayload struct {
@@ -15,6 +22,7 @@ type CreateEpisodesQueuePayload struct {
 	// VariantsPerEpisode is a slice of slices of variants. Each slice represents an episode. Each episode can have multiple variants.
 	VariantsPerEpisode [][]string
 	UserID             string
+	ProcessingType     ProcessingType
 }
 
 type PollEpisodesStatusQueuePayload struct {

@@ -122,13 +122,13 @@ type EpisodeStatusChange struct {
 }
 
 func (svc *Service) Start(ctx context.Context) chan []EpisodeStatusChange {
-	svc.jobsQueue.Subscribe(ctx, createEpisodes, func(payload []byte) error {
+	svc.jobsQueue.Subscribe(ctx, queueEventCreateEpisodes, func(payload []byte) error {
 		return svc.onCreateEpisodesQueueEvent(ctx, payload)
 	})
-	svc.jobsQueue.Subscribe(ctx, pollEpisodesStatus, func(payload []byte) error {
+	svc.jobsQueue.Subscribe(ctx, queueEventPollEpisodesStatus, func(payload []byte) error {
 		return svc.onPollEpisodesQueueEvent(ctx, payload)
 	})
-	svc.jobsQueue.Subscribe(ctx, regenerateFeed, func(payload []byte) error {
+	svc.jobsQueue.Subscribe(ctx, queueEventRegenerateFeed, func(payload []byte) error {
 		return svc.onRegenerateFeedQueueEvent(ctx, payload)
 	})
 	svc.jobsQueue.Run() // MUST be called after all subscriptions
@@ -141,18 +141,20 @@ func (svc *Service) FetchMetadata(ctx context.Context, mediaURL string) (*Metada
 	}, metadataDelays...)
 }
 
-func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, variantsPerEpisode [][]string, userID string) error {
+func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, variantsPerEpisode [][]string, processingType ProcessingType, userID string) error {
 	zapFields := []zap.Field{
 		zap.String("url", url),
 		zap.Any("variants_per_episode", variantsPerEpisode),
+		zap.String("processing_type", string(processingType)),
 		zap.String("user_id", userID),
 	}
 
 	svc.logger.Info("queueing episodes creation", zapFields...)
 
-	if err := svc.jobsQueue.Publish(ctx, createEpisodes, &CreateEpisodesQueuePayload{
+	if err := svc.jobsQueue.Publish(ctx, queueEventCreateEpisodes, &CreateEpisodesQueuePayload{
 		URL:                url,
 		VariantsPerEpisode: variantsPerEpisode,
+		ProcessingType:     processingType,
 		UserID:             userID,
 	}); err != nil {
 		return zaperr.Wrap(err, "failed to enqueue episodes creation", zapFields...)
@@ -161,13 +163,14 @@ func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, variant
 	return nil
 }
 
-func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, variants []string, userID string) (*Episode, error) {
+func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, variants []string, processingType ProcessingType, userID string) (*Episode, error) {
 	filename := uuid.New().String() + ".mp3" // TODO: implement more elaborate filename generation
 	episodeKey := path.Join(svc.getUserKeyPrefix(userID), "episodes", filename)
 
 	zapFields := []zap.Field{
 		zap.String("media_url", mediaURL),
 		zap.Strings("variants", variants),
+		zap.String("processing_type", string(processingType)),
 		zap.String("filename", filename),
 		zap.String("user_id", userID),
 		zap.String("episode_key", episodeKey),
@@ -178,14 +181,31 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, variants
 		return nil, zaperr.Wrap(err, "failed to get presigned url", zapFields...)
 	}
 
-	mediaryID, err := svc.mediaSvc.CreateUploadJob(ctx, &mediary.CreateUploadJobParams{
-		URL:  mediaURL,
-		Type: mediary.JobTypeConcatenate,
-		Params: mediary.ConcatenateJobParams{
-			Variants:  variants,
-			UploadURL: presignURL,
-		},
-	})
+	var mediaryParams *mediary.CreateUploadJobParams
+	switch processingType {
+	case ProcessingTypeConcatenate:
+		mediaryParams = &mediary.CreateUploadJobParams{
+			URL:  mediaURL,
+			Type: mediary.JobTypeConcatenate,
+			Params: mediary.ConcatenateJobParams{
+				Variants:  variants,
+				UploadURL: presignURL,
+			},
+		}
+	case ProcessingTypeUploadOriginal:
+		mediaryParams = &mediary.CreateUploadJobParams{
+			URL:  mediaURL,
+			Type: mediary.JobTypeUploadOriginal,
+			Params: mediary.UploadOriginalJobParams{
+				Variant:   variants[0],
+				UploadURL: presignURL,
+			},
+		}
+	default:
+		return nil, zaperr.Wrap(ErrNotImplemented, "unsupported processing type", zapFields...)
+	}
+
+	mediaryID, err := svc.mediaSvc.CreateUploadJob(ctx, mediaryParams)
 	if err != nil {
 		return nil, zaperr.Wrap(err, "failed to create mediary job", zapFields...)
 	}
@@ -392,7 +412,7 @@ func (svc *Service) PublishEpisodes(ctx context.Context, episodeIDs []string, fe
 		changedFeedIDs = append(changedFeedIDs, feed.ID)
 	}
 
-	if err = svc.jobsQueue.Publish(ctx, regenerateFeed, RegenerateFeedQueuePayload{
+	if err = svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
 		UserID:  userID,
 		FeedIDs: changedFeedIDs,
 	}); err != nil {
@@ -430,7 +450,7 @@ func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitle
 	}
 
 	if len(feedsToUpdate) > 0 {
-		if err = svc.jobsQueue.Publish(ctx, regenerateFeed, RegenerateFeedQueuePayload{
+		if err = svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
 			UserID:  userID,
 			FeedIDs: maps.Keys(feedsToUpdate),
 		}); err != nil {
@@ -503,7 +523,7 @@ func (svc *Service) RenameFeed(ctx context.Context, feedID string, userID string
 		return zaperr.Wrap(err, "failed to save feed", zapFields...)
 	}
 
-	if err = svc.jobsQueue.Publish(ctx, regenerateFeed, RegenerateFeedQueuePayload{
+	if err = svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
 		UserID:  userID,
 		FeedIDs: []string{feedID},
 	}); err != nil {
@@ -590,13 +610,14 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 	zapFields := []zap.Field{
 		zap.String("url", payload.URL),
 		zap.Any("variants_per_episode", payload.VariantsPerEpisode),
+		zap.String("processing_type", string(payload.ProcessingType)),
 	}
 
 	svc.logger.Info("creating queued episodes", zapFields...)
 
 	var createdEpisodes []*Episode
 	for _, variants := range payload.VariantsPerEpisode {
-		episode, err := svc.CreateEpisode(ctx, payload.URL, variants, payload.UserID)
+		episode, err := svc.CreateEpisode(ctx, payload.URL, variants, payload.ProcessingType, payload.UserID)
 		if err != nil {
 			return zaperr.Wrap(err, "failed to create single file episode", zapFields...)
 		}
@@ -608,7 +629,7 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 		episodeIDs[i] = e.ID
 	}
 
-	if err := svc.jobsQueue.Publish(ctx, pollEpisodesStatus, &PollEpisodesStatusQueuePayload{
+	if err := svc.jobsQueue.Publish(ctx, queueEventPollEpisodesStatus, &PollEpisodesStatusQueuePayload{
 		EpisodeIDs: episodeIDs,
 		UserID:     payload.UserID,
 	}); err != nil {
@@ -741,7 +762,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		feedIDs = append(feedIDs, f)
 	}
 	if len(feedIDs) > 0 {
-		if err := svc.jobsQueue.Publish(ctx, regenerateFeed, &RegenerateFeedQueuePayload{
+		if err := svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, &RegenerateFeedQueuePayload{
 			FeedIDs: feedIDs,
 			UserID:  payload.UserID,
 		}); err != nil {
@@ -782,7 +803,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		pollAfter := now.Add(*newPayload.Delay)
 		newPayload.PollAfter = &pollAfter
 
-		if err := svc.jobsQueue.Publish(ctx, pollEpisodesStatus, newPayload); err != nil {
+		if err := svc.jobsQueue.Publish(ctx, queueEventPollEpisodesStatus, newPayload); err != nil {
 			zapFields := append(zapFields, zap.Strings("episode_ids", episodeIDsToRequeue))
 			return zaperr.Wrap(err, "failed to enqueue episode status polling", zapFields...)
 		}

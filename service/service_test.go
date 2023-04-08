@@ -118,7 +118,7 @@ func TestService(t *testing.T) {
 		userID := mkUserID()
 
 		// region Create and publish
-		ep := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, userID))(t)
+		ep := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, "concatenate", userID))(t)
 
 		defaultFeed := must(svc.DefaultFeed(ctx, userID))(t)
 
@@ -155,7 +155,7 @@ func TestService(t *testing.T) {
 		userID := mkUserID()
 
 		// region Create and publish twice
-		ep := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, userID))(t)
+		ep := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, "concatenate", userID))(t)
 
 		defaultFeed := must(svc.DefaultFeed(ctx, userID))(t)
 
@@ -183,7 +183,7 @@ func TestService(t *testing.T) {
 		// region Create and publish 10 episodes to feed1 and others to feed2
 		episodeIDs := make([]string, 10)
 		for i := 0; i < 10; i++ {
-			ep := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, userID))(t)
+			ep := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, "concatenate", userID))(t)
 
 			var f *service.Feed
 			if i%2 == 0 {
@@ -202,7 +202,7 @@ func TestService(t *testing.T) {
 
 		// region Prepare feed3 with one existing episode
 		feed3 := must(svc.CreateFeed(ctx, userID, "third feed of user-1"))(t)
-		feed3ep := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, userID))(t)
+		feed3ep := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, "concatenate", userID))(t)
 		if err = svc.PublishEpisodes(ctx, []string{feed3ep.ID}, []string{feed3.ID}, userID); err != nil {
 			t.Fatalf("error publishing episode: %v", err)
 		}
@@ -307,7 +307,7 @@ func TestService(t *testing.T) {
 		userID := mkUserID()
 
 		feed := must(svc.CreateFeed(ctx, userID, "feed to be deleted"))(t)
-		ep1 := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, userID))(t)
+		ep1 := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, "concatenate", userID))(t)
 		if err = svc.PublishEpisodes(ctx, []string{ep1.ID}, []string{feed.ID}, userID); err != nil {
 			t.Fatalf("error publishing episode1: %v", err)
 		}
@@ -326,11 +326,11 @@ func TestService(t *testing.T) {
 		userID := mkUserID()
 
 		feed := must(svc.CreateFeed(ctx, userID, "feed to be deleted"))(t)
-		ep1 := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, userID))(t)
+		ep1 := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, "concatenate", userID))(t)
 		if err = svc.PublishEpisodes(ctx, []string{ep1.ID}, []string{feed.ID}, userID); err != nil {
 			t.Fatalf("error publishing episode1: %v", err)
 		}
-		ep2 := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, userID))(t)
+		ep2 := must(svc.CreateEpisode(ctx, "some-media-url", []string{}, "concatenate", userID))(t)
 		if err = svc.PublishEpisodes(ctx, []string{ep2.ID}, []string{feed.ID}, userID); err != nil {
 			t.Fatalf("error publishing episode2: %v", err)
 		}
