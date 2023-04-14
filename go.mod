@@ -16,7 +16,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/taylorchu/work v0.2.11
 	github.com/testcontainers/testcontainers-go v0.19.0
-	go.uber.org/multierr v1.9.0
+	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.24.0
 	golang.org/x/exp v0.0.0-20230118134722-a68e582fa157
 )
