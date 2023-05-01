@@ -14,7 +14,7 @@ require (
 	github.com/hori-ryota/zaperr v0.0.0-20210301022522-bfd0551d7f64
 	github.com/jbub/podcasts v0.2.0
 	github.com/joho/godotenv v1.5.1
-	github.com/taylorchu/work v0.2.11
+	github.com/taylorchu/work v0.2.13
 	github.com/testcontainers/testcontainers-go v0.19.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.24.0
@@ -64,6 +64,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.0-rc2 // indirect
 	github.com/opencontainers/runc v1.1.5 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/redis/go-redis/v9 v9.0.2 // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.3.5 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
