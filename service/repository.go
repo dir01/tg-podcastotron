@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
-
 	"github.com/go-redis/redis/v8"
+	"strconv"
 )
 
 func NewRepository(redisClient *redis.Client, namespace string) *Repository {
@@ -138,7 +137,11 @@ func (repo *Repository) ListUserFeeds(ctx context.Context, userID string) ([]*Fe
 	}
 	feeds := make([]*Feed, len(rawFeeds))
 	for i, rawFeed := range rawFeeds {
-		feeds[i], err = repo.feedFromJSON([]byte(rawFeed.(string)))
+		rawFeedStr, isStr := rawFeed.(string)
+		if !isStr {
+			return nil, fmt.Errorf("failed to list user feeds: %w", err)
+		}
+		feeds[i], err = repo.feedFromJSON([]byte(rawFeedStr))
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal feed: %w", err)
 		}
