@@ -104,6 +104,14 @@ func New(b *bot.Bot, paths []string, onConfirmSelection OnConfirmSelectionHandle
 		opt(tms)
 	}
 
+	if tms.dynamicFilterButtons != nil {
+		tms.filterButtons = tms.dynamicFilterButtons(maps.Values(tms.currentNode.Children))
+	}
+
+	if tms.dynamicActionButtons != nil {
+		tms.actionButtons = tms.dynamicActionButtons(maps.Values(tms.currentNode.Children))
+	}
+
 	tms.callbackHandlerID = b.RegisterHandler(bot.HandlerTypeCallbackQueryData, tms.prefix, bot.MatchTypePrefix, tms.callback)
 
 	return tms

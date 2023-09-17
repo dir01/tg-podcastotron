@@ -9,13 +9,12 @@ import (
 	"github.com/jbub/podcasts"
 )
 
-func generateFeed(feed *Feed, episodesMap map[string]*Episode) (io.ReadSeeker, error) {
+func generateFeed(feed *Feed, episodes []*Episode) (io.ReadSeeker, error) {
 	p := &podcasts.Podcast{
 		Title: feed.Title,
 	}
 
-	for _, eID := range feed.EpisodeIDs {
-		e := episodesMap[eID]
+	for _, e := range episodes {
 		p.AddItem(&podcasts.Item{
 			Title:    fmt.Sprintf("%s (#%s)", e.Title, e.ID),
 			GUID:     e.ID,

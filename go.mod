@@ -13,7 +13,10 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/hori-ryota/zaperr v0.0.0-20210301022522-bfd0551d7f64
 	github.com/jbub/podcasts v0.2.0
+	github.com/jmoiron/sqlx v1.3.5
 	github.com/joho/godotenv v1.5.1
+	github.com/mattn/go-sqlite3 v1.14.17
+	github.com/rubenv/sql-migrate v1.5.2
 	github.com/taylorchu/work v0.2.11
 	github.com/testcontainers/testcontainers-go v0.21.0
 	go.uber.org/multierr v1.11.0
@@ -51,6 +54,7 @@ require (
 	github.com/docker/distribution v2.8.2+incompatible // indirect
 	github.com/docker/docker v23.0.5+incompatible // indirect
 	github.com/docker/go-units v0.5.0 // indirect
+	github.com/go-gorp/gorp/v3 v3.1.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/imdario/mergo v0.3.16 // indirect
@@ -74,8 +78,8 @@ require (
 	golang.org/x/net v0.11.0 // indirect
 	golang.org/x/sys v0.9.0 // indirect
 	golang.org/x/tools v0.10.0 // indirect
-	google.golang.org/genproto v0.0.0-20230525234025-438c736192d0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230626202813-9b080da550b3 // indirect
 	google.golang.org/grpc v1.56.1 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
+	gotest.tools/v3 v3.5.0 // indirect
 )

@@ -13,23 +13,34 @@ import (
 	"tg-podcastotron/service"
 )
 
-func NewUndercastBot(token string, auth *auth.Service, botStore *RedisStore, service *service.Service, logger *zap.Logger) *UndercastBot {
+func NewUndercastBot(
+	token string,
+	auth *auth.Service,
+	repository Repository,
+	service *service.Service,
+	logger *zap.Logger,
+) *UndercastBot {
 	return &UndercastBot{
-		logger:  logger,
-		token:   token,
-		auth:    auth,
-		service: service,
-		store:   botStore,
+		logger:     logger,
+		token:      token,
+		auth:       auth,
+		service:    service,
+		repository: repository,
 	}
 }
 
+type Repository interface {
+	SetChatID(ctx context.Context, userID string, chatID int64) error
+	GetChatID(ctx context.Context, userID string) (int64, error)
+}
+
 type UndercastBot struct {
-	logger  *zap.Logger
-	token   string
-	bot     *bot.Bot
-	auth    *auth.Service
-	service *service.Service
-	store   *RedisStore
+	logger     *zap.Logger
+	token      string
+	bot        *bot.Bot
+	auth       *auth.Service
+	service    *service.Service
+	repository Repository
 
 	episodesStatusChangesChan chan []service.EpisodeStatusChange
 }

@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"github.com/hori-ryota/zaperr"
+	_ "github.com/mattn/go-sqlite3"
 	"os"
 	"os/signal"
 
@@ -70,8 +72,6 @@ func main() {
 			}
 		}
 	}
-	redisClient, cleanupRedisClient := mkRedisClient(redisURL)
-	defer cleanupRedisClient()
 	bgJobsRedisClient, cleanupBgJobsRedisClient := mkRedisClient(bgJobsRedisURL)
 	defer cleanupBgJobsRedisClient()
 	// endregion
@@ -118,7 +118,11 @@ func main() {
 	// endregion
 
 	mediaryService := mediary.New(mediaryURL, logger)
-	svcRepo := service.NewRepository(redisClient, "undercast:service")
+	db, err := sql.Open("sqlite3", "./db/sqlite.db")
+	if err != nil {
+		logger.Fatal("error opening db", zaperr.ToField(err))
+	}
+	svcRepo := service.NewSqliteRepository(db)
 	s3Store := service.NewS3Store(s3Client, awsBucketName)
 	obfuscateIDs := func(id string) string {
 		hash := sha256.Sum256([]byte(userPathSecret + id))
@@ -126,8 +130,8 @@ func main() {
 	}
 	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, defaultFeedTitle, obfuscateIDs, logger)
 
-	botStore := bot.NewRedisStore(redisClient, "undercast:bot")
-	authRepo := auth.NewRepository(redisClient, "undercast:auth")
+	botStore := bot.NewSqliteRepository(db)
+	authRepo := auth.NewSqliteRepository(db)
 	botAuthService := auth.New(adminUsername, authRepo, logger)
 	ubot := bot.NewUndercastBot(botToken, botAuthService, botStore, svc, logger)
 	if err := ubot.Start(ctx); err != nil {

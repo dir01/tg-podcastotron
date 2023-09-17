@@ -17,7 +17,7 @@ func (ub *UndercastBot) authenticate(next bot.HandlerFunc) bot.HandlerFunc {
 			return
 		}
 
-		_ = ub.store.SetChatID(ctx, userID, chatID)
+		_ = ub.repository.SetChatID(ctx, userID, chatID)
 
 		if isAuthenticated, err := ub.auth.IsAuthenticated(ctx, userID, username); isAuthenticated && err == nil {
 			next(ctx, b, update)

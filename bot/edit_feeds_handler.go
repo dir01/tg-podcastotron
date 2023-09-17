@@ -112,7 +112,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 					},
 					func(ctx context.Context, b *bot.Bot, update *models.Update) {
 						newTitle := update.Message.Text
-						if err := ub.service.RenameFeed(ctx, feedID, userID, newTitle); err != nil {
+						if err := ub.service.RenameFeed(ctx, userID, feedID, newTitle); err != nil {
 							ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to rename feed", zapFields...))
 							return
 						}
@@ -130,7 +130,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 		case cmdDeleteFeed, cmdDeleteFeedAndEpisodes:
 			shouldDeleteEpisodes := st == cmdDeleteFeedAndEpisodes
 
-			if err := ub.service.DeleteFeed(ctx, feedID, userID, shouldDeleteEpisodes); err != nil {
+			if err := ub.service.DeleteFeed(ctx, userID, feedID, shouldDeleteEpisodes); err != nil {
 				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to delete episodes", zapFields...))
 				return
 			}
