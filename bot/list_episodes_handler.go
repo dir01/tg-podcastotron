@@ -75,7 +75,7 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 		if epID == "" {
 			text = ub.renderEpisodeShort(ep)
 		} else {
-			feeds, err := ub.service.ListEpisodeFeeds(ctx, ep.ID, userID)
+			feeds, err := ub.service.ListEpisodeFeeds(ctx, userID, ep.ID)
 			if err != nil {
 				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list episode feeds", zapFields...))
 				return
