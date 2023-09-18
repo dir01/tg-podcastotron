@@ -181,7 +181,7 @@ func (r *sqliteRepository) GetFeedsMap(ctx context.Context, userID string, feedI
 func (r *sqliteRepository) ListUserFeeds(ctx context.Context, userID string) ([]*Feed, error) {
 	var dbFeeds []dbFeed
 	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &dbFeeds, `
-		SELECT * FROM feeds WHERE user_id = ?`, userID,
+		SELECT * FROM feeds WHERE user_id = ? ORDER BY id ASC`, userID,
 	); err != nil {
 		return nil, zaperr.Wrap(err, "failed to list user feeds")
 	}
