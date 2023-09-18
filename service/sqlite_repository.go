@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"github.com/hori-ryota/zaperr"
 	"github.com/jmoiron/sqlx"
 	"strconv"
@@ -411,6 +412,35 @@ func (r *sqliteRepository) DeleteEpisodes(ctx context.Context, userID string, ep
 	}
 
 	return nil
+}
+
+func (r *sqliteRepository) ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error) {
+	db := r.dbFromContext(ctx)
+
+	query, args, err := sqlx.Named(`
+		SELECT * FROM episodes WHERE episodes.pub_date < :min_created_at
+	`, map[string]interface{}{
+		"min_created_at": time.Now().Add(-maxAge),
+	})
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to create query")
+	}
+
+	var dbEpisodes []dbEpisode
+	if err := sqlx.SelectContext(ctx, db, &dbEpisodes, query, args...); err != nil {
+		return nil, zaperr.Wrap(err, "failed to query episodes")
+	}
+
+	result := make([]*Episode, len(dbEpisodes))
+	for idx, dbEp := range dbEpisodes {
+		if ep, err := dbEp.ToBusinessModel(); err != nil {
+			return nil, zaperr.Wrap(err, "failed to convert to business model")
+		} else {
+			result[idx] = ep
+		}
+	}
+
+	return result, nil
 }
 
 // endregion

@@ -41,6 +41,7 @@ type Repository interface {
 	ListFeedEpisodes(ctx context.Context, userID, feedID string) ([]*Episode, error)
 	GetEpisodesMap(ctx context.Context, userID string, episodeIDs []string) (map[string]*Episode, error)
 	DeleteEpisodes(ctx context.Context, userID string, episodeIDs []string) error
+	ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error)
 
 	BulkInsertPublications(ctx context.Context, publications []*Publication) error
 	ListPublicationsByEpisodeIDs(ctx context.Context, userID string, episodeIDs []string) ([]*Publication, error)
@@ -649,6 +650,10 @@ func (svc *Service) GetPublishedFeedsMap(ctx context.Context, userID string, epI
 	}
 
 	return epToFeedMap, nil
+}
+
+func (svc *Service) ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error) {
+	return svc.repository.ListExpiredEpisodes(ctx, maxAge)
 }
 
 func (svc *Service) createFeed(ctx context.Context, userID string, title string, feedID string) (*Feed, error) {

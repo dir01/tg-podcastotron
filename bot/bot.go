@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -63,6 +64,8 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 		}
 	}()
 
+	go ub.pollExpiredEpisodes(ctx, time.NewTicker(24*time.Hour), 30*24*time.Hour)
+
 	var err error
 	ub.bot, err = bot.New(ub.token, opts...)
 	if err != nil {
@@ -83,6 +86,40 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 	ub.bot.Start(ctx)
 
 	return nil
+}
+
+func (ub *UndercastBot) pollExpiredEpisodes(
+	ctx context.Context,
+	pollingTicker *time.Ticker,
+	epExpirationAge time.Duration,
+) {
+	ub.logger.Info("starting expired episodes poller")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-pollingTicker.C:
+			ub.logger.Info("listing expired episodes")
+			expiredEps, err := ub.service.ListExpiredEpisodes(ctx, epExpirationAge)
+			if err != nil {
+				ub.logger.Error("error while listing expired episodes", zaperr.ToField(err))
+				continue
+			}
+
+			for _, ep := range expiredEps {
+				if err := ub.service.DeleteEpisodes(ctx, ep.UserID, []string{ep.ID}); err != nil {
+					ub.logger.Error("error while deleting episode", zaperr.ToField(err))
+				} else {
+					ub.logger.Info(
+						"deleted episode",
+						zap.String("id", ep.ID),
+						zap.String("title", ep.Title),
+						zap.String("url", ep.URL),
+					)
+				}
+			}
+		}
+	}
 }
 
 func (ub *UndercastBot) handleError(ctx context.Context, chatID int64, err error) {
