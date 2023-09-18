@@ -89,8 +89,8 @@ func TestService(t *testing.T) {
 			t.Fatalf("expected default feed to have id 1, got %s", feed.ID)
 		}
 
-		if feed.URL != "https://exapmple.com/"+userID+"/feeds/1" {
-			t.Fatalf("expected default feed to have url https://exapmple.com/"+userID+"/feeds/1, got %s", feed.URL)
+		if feed.URL != "https://exapmple.com/feeds/"+userID+"/1" {
+			t.Fatalf("expected default feed to have url https://exapmple.com/feeds/"+userID+"/1, got %s", feed.URL)
 		}
 	})
 
@@ -102,8 +102,8 @@ func TestService(t *testing.T) {
 			t.Fatalf("expected feed to have id 2, got %s", feed.ID)
 		}
 
-		if feed.URL != "https://exapmple.com/"+userID+"/feeds/2" {
-			t.Fatalf("expected feed to have url https://exapmple.com/"+userID+"/feeds/2, got %s", feed.URL)
+		if feed.URL != "https://exapmple.com/feeds/"+userID+"/2" {
+			t.Fatalf("expected feed to have url https://exapmple.com/feeds/"+userID+"/2, got %s", feed.URL)
 		}
 	})
 
@@ -295,7 +295,7 @@ func TestService(t *testing.T) {
 
 		feedWasDeleted := false
 		for _, call := range mockedS3Store.DeleteCalls() {
-			if call.Key == userID+"/feeds/2" {
+			if call.Key == "feeds/"+userID+"/2" {
 				feedWasDeleted = true
 			}
 		}
@@ -357,7 +357,7 @@ func TestService(t *testing.T) {
 		ep2WasDeleted := false
 		for _, call := range mockedS3Store.DeleteCalls() {
 			switch {
-			case call.Key == userID+"/feeds/2":
+			case call.Key == "feeds/"+userID+"/2":
 				feedWasDeleted = true
 			case strings.Contains(ep1.URL, call.Key):
 				ep1WasDeleted = true

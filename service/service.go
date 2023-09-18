@@ -114,9 +114,9 @@ var (
 		1 * time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second,
 		40 * time.Second, 60 * time.Second, 120 * time.Second, 240 * time.Second,
 	}
-	ErrFeedNotFound            = fmt.Errorf("feed not found")
-	ErrEpisodeNotFound         = fmt.Errorf("episode not found")
-	ErrNotImplemented          = fmt.Errorf("not implemented")
+	ErrFeedNotFound    = fmt.Errorf("feed not found")
+	ErrEpisodeNotFound = fmt.Errorf("episode not found")
+	ErrNotImplemented  = fmt.Errorf("not implemented")
 )
 
 const maxPollEpisodesRequeueCount = 100
@@ -201,7 +201,7 @@ func (svc *Service) CreateEpisodesAsync(
 
 func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL string, variants []string, processingType ProcessingType) (*Episode, error) {
 	filename := uuid.New().String() + ".mp3" // TODO: implement more elaborate filename generation
-	episodeKey := path.Join(svc.getUserKeyPrefix(userID), "episodes", filename)
+	episodeKey := svc.constructS3EpisodeKey(userID, filename)
 
 	zapFields := []zap.Field{
 		zap.String("media_url", mediaURL),
@@ -606,7 +606,7 @@ func (svc *Service) DeleteFeed(ctx context.Context, userID string, feedID string
 		}
 	}
 
-	if err := svc.s3Store.Delete(ctx, svc.constructS3FeedPath(userID, feedID)); err != nil {
+	if err := svc.s3Store.Delete(ctx, svc.constructS3FeedKey(userID, feedID)); err != nil {
 		return zaperr.Wrap(err, "failed to delete feed from s3", zapFields...)
 	}
 
@@ -615,6 +615,50 @@ func (svc *Service) DeleteFeed(ctx context.Context, userID string, feedID string
 	}
 
 	return nil
+}
+
+func (svc *Service) ListFeedEpisodes(ctx context.Context, userID string, feedID string) ([]*Episode, error) {
+	return svc.repository.ListFeedEpisodes(ctx, userID, feedID)
+}
+
+func (svc *Service) ListEpisodeFeeds(ctx context.Context, userID string, epID string) ([]*Feed, error) {
+	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, []string{epID})
+	if err != nil {
+		return nil, err
+	}
+
+	feedIDs := make([]string, 0, len(publications))
+	for _, p := range publications {
+		if p.EpisodeID == epID {
+			feedIDs = append(feedIDs, p.FeedID)
+		}
+	}
+
+	feedsMap, err := svc.repository.GetFeedsMap(ctx, userID, feedIDs)
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to list episode feeds")
+	}
+
+	feeds := make([]*Feed, 0, len(feedsMap))
+	for _, fid := range feedIDs {
+		feeds = append(feeds, feedsMap[fid])
+	}
+
+	return feeds, nil
+}
+
+func (svc *Service) GetPublishedFeedsMap(ctx context.Context, epIDs []string, userID string) (map[string][]string, error) {
+	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	epToFeedMap := make(map[string][]string, len(publications))
+	for _, p := range publications {
+		epToFeedMap[p.EpisodeID] = append(epToFeedMap[p.EpisodeID], p.FeedID)
+	}
+
+	return epToFeedMap, nil
 }
 
 func (svc *Service) createFeed(ctx context.Context, userID string, title string, feedID string) (*Feed, error) {
@@ -628,7 +672,7 @@ func (svc *Service) createFeed(ctx context.Context, userID string, title string,
 		}
 	}
 
-	feedPath := svc.constructS3FeedPath(userID, feedID)
+	feedPath := svc.constructS3FeedKey(userID, feedID)
 	presignURL, err := svc.s3Store.PreSignedURL(feedPath)
 	if err != nil {
 		return nil, fmt.Errorf("CreateFeed failed to get presigned url: %w", err)
@@ -911,7 +955,7 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 		return zaperr.Wrap(err, "failed to list feed episodes", zapFields...)
 	}
 
-	objectKey := svc.constructS3FeedPath(feed.UserID, feed.ID)
+	objectKey := svc.constructS3FeedKey(feed.UserID, feed.ID)
 	feedReader, err := generateFeed(feed, episodes)
 	if err != nil {
 		return zaperr.Wrap(err, "failed to generate feed", zapFields...)
@@ -924,8 +968,14 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 	return nil
 }
 
-func (svc *Service) constructS3FeedPath(userID string, feedID string) string {
-	return path.Join(svc.getUserKeyPrefix(userID), "feeds", feedID)
+func (svc *Service) constructS3FeedKey(userID string, feedID string) string {
+	// we want `feeds` to go first to make it easier to assign prefix-based policies
+	return path.Join("feeds", svc.getUserKeyPrefix(userID), feedID)
+}
+
+func (svc *Service) constructS3EpisodeKey(userID string, filename string) string {
+	// we want `episodes` to go first to make it easier to assign prefix-based policies
+	return path.Join("episodes", svc.getUserKeyPrefix(userID), filename)
 }
 
 func (svc *Service) getUserKeyPrefix(userID string) string {
@@ -941,50 +991,6 @@ func (svc *Service) extractEpisodeS3Key(ep *Episode) string {
 	// TODO: remove this fallback after some time
 	userPrefix := svc.getUserKeyPrefix(ep.UserID)
 	return ep.URL[strings.Index(ep.URL, userPrefix):]
-}
-
-func (svc *Service) ListFeedEpisodes(ctx context.Context, userID string, feedID string) ([]*Episode, error) {
-	return svc.repository.ListFeedEpisodes(ctx, userID, feedID)
-}
-
-func (svc *Service) ListEpisodeFeeds(ctx context.Context, userID string, epID string) ([]*Feed, error) {
-	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, []string{epID})
-	if err != nil {
-		return nil, err
-	}
-
-	feedIDs := make([]string, 0, len(publications))
-	for _, p := range publications {
-		if p.EpisodeID == epID {
-			feedIDs = append(feedIDs, p.FeedID)
-		}
-	}
-
-	feedsMap, err := svc.repository.GetFeedsMap(ctx, userID, feedIDs)
-	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to list episode feeds")
-	}
-
-	feeds := make([]*Feed, 0, len(feedsMap))
-	for _, fid := range feedIDs {
-		feeds = append(feeds, feedsMap[fid])
-	}
-
-	return feeds, nil
-}
-
-func (svc *Service) GetPublishedFeedsMap(ctx context.Context, epIDs []string, userID string) (map[string][]string, error) {
-	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	epToFeedMap := make(map[string][]string, len(publications))
-	for _, p := range publications {
-		epToFeedMap[p.EpisodeID] = append(epToFeedMap[p.EpisodeID], p.FeedID)
-	}
-
-	return epToFeedMap, nil
 }
 
 func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, error) {
