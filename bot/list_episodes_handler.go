@@ -35,7 +35,7 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	var episodes []*service.Episode
 	feedMap := map[string]*service.Feed{}
 	if epID == "" {
-		if episodes, err = ub.service.ListEpisodes(ctx, userID); err != nil {
+		if episodes, err = ub.service.ListUserEpisodes(ctx, userID); err != nil {
 			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
 			return
 		}

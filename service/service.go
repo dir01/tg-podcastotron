@@ -302,7 +302,7 @@ func (svc *Service) IsValidURL(ctx context.Context, mediaURL string) (bool, erro
 	}
 }
 
-func (svc *Service) ListEpisodes(ctx context.Context, userID string) ([]*Episode, error) {
+func (svc *Service) ListUserEpisodes(ctx context.Context, userID string) ([]*Episode, error) {
 	if episodes, err := svc.repository.ListUserEpisodes(ctx, userID); err == nil {
 		return episodes, nil
 	} else {

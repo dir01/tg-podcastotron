@@ -51,7 +51,7 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 		feeds = []*service.Feed{feed}
 	}
 
-	episodes, err := ub.service.ListEpisodes(ctx, userID)
+	episodes, err := ub.service.ListUserEpisodes(ctx, userID)
 	if err != nil {
 		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
 		return

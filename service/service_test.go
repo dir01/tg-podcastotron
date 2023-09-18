@@ -317,7 +317,7 @@ func TestService(t *testing.T) {
 			t.Fatalf("error deleting feed: %v", err)
 		}
 
-		episodes := must(svc.ListEpisodes(ctx, userID))(t)
+		episodes := must(svc.ListUserEpisodes(ctx, userID))(t)
 		if len(episodes) != 1 {
 			t.Fatalf("expected 1 episode, got %d", len(episodes))
 		}
@@ -347,7 +347,7 @@ func TestService(t *testing.T) {
 			t.Fatalf("expected 1 feed, got %d", len(feeds))
 		}
 
-		episodes := must(svc.ListEpisodes(ctx, userID))(t)
+		episodes := must(svc.ListUserEpisodes(ctx, userID))(t)
 		if len(episodes) != 0 {
 			t.Fatalf("expected 0 episodes, got %d", len(episodes))
 		}
