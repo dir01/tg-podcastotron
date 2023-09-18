@@ -57,18 +57,14 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 			Text:         "Rename Feed",
 			CallbackData: prefix + cmdRename,
 		}},
-	}
-	if feed, err := ub.service.DefaultFeed(ctx, userID); err == nil && feedID != feed.ID {
-		kb = append(kb, [][]models.InlineKeyboardButton{
-			{{
-				Text:         "Delete Feed",
-				CallbackData: prefix + cmdDeleteFeed,
-			}},
-			{{
-				Text:         "Delete Feed and Episodes",
-				CallbackData: prefix + cmdDeleteFeedAndEpisodes,
-			}},
-		}...)
+		{{
+			Text:         "Delete Feed",
+			CallbackData: prefix + cmdDeleteFeed,
+		}},
+		{{
+			Text:         "Delete Feed and Episodes",
+			CallbackData: prefix + cmdDeleteFeedAndEpisodes,
+		}},
 	}
 
 	initialMessage, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{

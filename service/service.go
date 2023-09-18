@@ -90,6 +90,7 @@ const (
 	EpisodeStatusUploading   EpisodeStatus = "uploading"
 	EpisodeStatusComplete    EpisodeStatus = "complete"
 )
+
 const DefaultFeedID = "1"
 
 type Feed struct {
@@ -116,7 +117,6 @@ var (
 	ErrFeedNotFound            = fmt.Errorf("feed not found")
 	ErrEpisodeNotFound         = fmt.Errorf("episode not found")
 	ErrNotImplemented          = fmt.Errorf("not implemented")
-	ErrCannotDeleteDefaultFeed = fmt.Errorf("cannot delete default feed")
 )
 
 const maxPollEpisodesRequeueCount = 100
