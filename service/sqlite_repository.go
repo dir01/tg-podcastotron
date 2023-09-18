@@ -206,7 +206,10 @@ func (r *sqliteRepository) DeleteFeed(ctx context.Context, userID string, feedID
 
 func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episode, error) {
 	db := r.dbFromContext(ctx)
-	dbEp := dbEpisode{}.FromBusinessModel(ep)
+	dbEp, err := dbEpisode{}.FromBusinessModel(ep)
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to serialize episode")
+	}
 
 	if _, err := sqlx.NamedExecContext(ctx, db, `
 		INSERT INTO episodes (
@@ -585,7 +588,13 @@ type dbEpisode struct {
 	StorageKey      string        `db:"storage_key"`
 }
 
-func (dbEpisode) FromBusinessModel(ep *Episode) *dbEpisode {
+func (dbEpisode) FromBusinessModel(ep *Episode) (*dbEpisode, error) {
+	if ep == nil {
+		return nil, fmt.Errorf("ep is nil")
+	}
+	if ep.PubDate.IsZero() {
+		return nil, fmt.Errorf("pub date is zero")
+	}
 	return &dbEpisode{
 		ID:              ep.ID,
 		UserID:          ep.UserID,
@@ -600,7 +609,7 @@ func (dbEpisode) FromBusinessModel(ep *Episode) *dbEpisode {
 		FileLenBytes:    ep.FileLenBytes,
 		Format:          ep.Format,
 		StorageKey:      ep.StorageKey,
-	}
+	}, nil
 }
 
 func (d dbEpisode) ToBusinessModel() (*Episode, error) {
