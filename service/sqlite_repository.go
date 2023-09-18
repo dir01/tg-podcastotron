@@ -142,6 +142,10 @@ func (r *sqliteRepository) GetFeed(ctx context.Context, userID, feedID string) (
 func (r *sqliteRepository) GetFeedsMap(ctx context.Context, userID string, feedIDs []string) (map[string]*Feed, error) {
 	db := r.dbFromContext(ctx)
 
+	if len(feedIDs) == 0 {
+		return map[string]*Feed{}, nil
+	}
+
 	query, args, err := sqlx.Named(`
 		SELECT * FROM feeds
 			WHERE id IN (:ids)
