@@ -132,7 +132,7 @@ func New(
 	logger *zap.Logger,
 ) *Service {
 	if defaultFeedTitle == "" {
-		defaultFeedTitle = "Podcastotron"
+		defaultFeedTitle = "Podcast-O-Tron"
 	}
 	return &Service{
 		logger:                   logger,
