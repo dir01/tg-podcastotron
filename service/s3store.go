@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -21,6 +22,16 @@ func NewS3Store(s3Client *s3.Client, bucketName string) S3Store {
 type s3Store struct {
 	s3Client   *s3.Client
 	bucketName string
+}
+
+func (store *s3Store) URL(key string) (url string, err error) {
+	// TODO: there surely must be a more sane way to do this
+	presignURL, err := store.PreSignedURL(key)
+	if err != nil {
+		return "", fmt.Errorf("s3store failed to get presigned url: %w", err)
+	}
+	url = stripQuery(presignURL)
+	return url, nil
 }
 
 func (store *s3Store) PreSignedURL(key string) (string, error) {
@@ -77,4 +88,11 @@ func (store *s3Store) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("failed to delete object: %w", err)
 	}
 	return nil
+}
+
+func stripQuery(url string) string {
+	if i := strings.Index(url, "?"); i != -1 {
+		return url[:i]
+	}
+	return url
 }

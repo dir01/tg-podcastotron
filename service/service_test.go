@@ -65,7 +65,10 @@ func TestService(t *testing.T) {
 	}
 	mockedS3Store := &servicemocks.MockS3Store{
 		PreSignedURLFunc: func(key string) (string, error) {
-			return "https://exapmple.com/" + key, nil
+			return "https://example.com/" + key, nil
+		},
+		URLFunc: func(key string) (string, error) {
+			return "https://example.com/" + key, nil
 		},
 		DeleteFunc: func(ctx context.Context, key string) error {
 			return nil
@@ -89,8 +92,8 @@ func TestService(t *testing.T) {
 			t.Fatalf("expected default feed to have id 1, got %s", feed.ID)
 		}
 
-		if feed.URL != "https://exapmple.com/feeds/"+userID+"/1" {
-			t.Fatalf("expected default feed to have url https://exapmple.com/feeds/"+userID+"/1, got %s", feed.URL)
+		if feed.URL != "https://example.com/feeds/"+userID+"/1" {
+			t.Fatalf("expected default feed to have url https://example.com/feeds/"+userID+"/1, got %s", feed.URL)
 		}
 	})
 
@@ -102,8 +105,8 @@ func TestService(t *testing.T) {
 			t.Fatalf("expected feed to have id 2, got %s", feed.ID)
 		}
 
-		if feed.URL != "https://exapmple.com/feeds/"+userID+"/2" {
-			t.Fatalf("expected feed to have url https://exapmple.com/feeds/"+userID+"/2, got %s", feed.URL)
+		if feed.URL != "https://example.com/feeds/"+userID+"/2" {
+			t.Fatalf("expected feed to have url https://example.com/feeds/"+userID+"/2, got %s", feed.URL)
 		}
 	})
 

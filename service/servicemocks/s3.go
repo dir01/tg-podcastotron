@@ -29,6 +29,9 @@ var _ service.S3Store = &MockS3Store{}
 //			PutFunc: func(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*service.PutOptions)) error {
 //				panic("mock out the Put method")
 //			},
+//			URLFunc: func(key string) (string, error) {
+//				panic("mock out the URL method")
+//			},
 //		}
 //
 //		// use mockedS3Store in code that requires service.S3Store
@@ -44,6 +47,9 @@ type MockS3Store struct {
 
 	// PutFunc mocks the Put method.
 	PutFunc func(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*service.PutOptions)) error
+
+	// URLFunc mocks the URL method.
+	URLFunc func(key string) (string, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -70,10 +76,16 @@ type MockS3Store struct {
 			// Opts is the opts argument value.
 			Opts []func(*service.PutOptions)
 		}
+		// URL holds details about calls to the URL method.
+		URL []struct {
+			// Key is the key argument value.
+			Key string
+		}
 	}
 	lockDelete       sync.RWMutex
 	lockPreSignedURL sync.RWMutex
 	lockPut          sync.RWMutex
+	lockURL          sync.RWMutex
 }
 
 // Delete calls DeleteFunc.
@@ -185,5 +197,37 @@ func (mock *MockS3Store) PutCalls() []struct {
 	mock.lockPut.RLock()
 	calls = mock.calls.Put
 	mock.lockPut.RUnlock()
+	return calls
+}
+
+// URL calls URLFunc.
+func (mock *MockS3Store) URL(key string) (string, error) {
+	if mock.URLFunc == nil {
+		panic("MockS3Store.URLFunc: method is nil but S3Store.URL was just called")
+	}
+	callInfo := struct {
+		Key string
+	}{
+		Key: key,
+	}
+	mock.lockURL.Lock()
+	mock.calls.URL = append(mock.calls.URL, callInfo)
+	mock.lockURL.Unlock()
+	return mock.URLFunc(key)
+}
+
+// URLCalls gets all the calls that were made to URL.
+// Check the length with:
+//
+//	len(mockedS3Store.URLCalls())
+func (mock *MockS3Store) URLCalls() []struct {
+	Key string
+} {
+	var calls []struct {
+		Key string
+	}
+	mock.lockURL.RLock()
+	calls = mock.calls.URL
+	mock.lockURL.RUnlock()
 	return calls
 }
