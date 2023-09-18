@@ -345,17 +345,6 @@ func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, erro
 	return feeds, nil
 }
 
-func (svc *Service) GetFeedsMap(ctx context.Context, userID string, feedIDs []string) (map[string]*Feed, error) {
-	if len(feedIDs) == 0 {
-		return map[string]*Feed{}, nil
-	}
-	feeds, err := svc.repository.GetFeedsMap(ctx, userID, feedIDs)
-	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get feeds map", zap.Strings("feed_ids", feedIDs))
-	}
-	return feeds, nil
-}
-
 func (svc *Service) DefaultFeed(ctx context.Context, userID string) (*Feed, error) {
 
 	existing, err := svc.repository.GetFeed(ctx, userID, DefaultFeedID)
