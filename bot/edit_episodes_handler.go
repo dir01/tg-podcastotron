@@ -173,7 +173,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			deleteInitialMessage()
 		case cmdManageFeeds:
 			items := make([]*multiselect.Item, len(feeds))
-			epFeedsMap, err := ub.service.GetPublishedFeedsMap(ctx, epIDs, userID)
+			epFeedsMap, err := ub.service.GetPublishedFeedsMap(ctx, userID, epIDs)
 			if err != nil {
 				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get published feeds", zapFields...))
 				return

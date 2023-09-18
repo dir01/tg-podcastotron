@@ -637,7 +637,7 @@ func (svc *Service) ListEpisodeFeeds(ctx context.Context, userID string, epID st
 	return feeds, nil
 }
 
-func (svc *Service) GetPublishedFeedsMap(ctx context.Context, epIDs []string, userID string) (map[string][]string, error) {
+func (svc *Service) GetPublishedFeedsMap(ctx context.Context, userID string, epIDs []string) (map[string][]string, error) {
 	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
 	if err != nil {
 		return nil, err
