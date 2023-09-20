@@ -42,11 +42,7 @@ func main() {
 	botToken := mustGetEnv("BOT_TOKEN")
 	adminUsername := mustGetEnv("ADMIN_USERNAME")
 	mediaryURL := mustGetEnv("MEDIARY_URL")
-	redisURL := mustGetEnv("REDIS_URL")
-	bgJobsRedisURL := os.Getenv("REDIS_URL_BG_JOBS")
-	if bgJobsRedisURL == "" {
-		bgJobsRedisURL = redisURL
-	}
+	bgJobsRedisURL := mustGetEnv("REDIS_URL_BG_JOBS")
 	awsRegion := mustGetEnv("AWS_REGION")
 	awsAccessKeyID := mustGetEnv("AWS_ACCESS_KEY_ID")
 	awsSecretAccessKey := mustGetEnv("AWS_SECRET_ACCESS_KEY")
