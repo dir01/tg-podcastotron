@@ -18,7 +18,7 @@ func generateFeed(feed *Feed, episodes []*Episode) (io.ReadSeeker, error) {
 		p.AddItem(&podcasts.Item{
 			Title:    fmt.Sprintf("%s (#%s)", e.Title, e.ID),
 			GUID:     e.ID,
-			PubDate:  podcasts.NewPubDate(e.PubDate),
+			PubDate:  podcasts.NewPubDate(e.CreatedAt),
 			Duration: podcasts.NewDuration(e.Duration),
 			Enclosure: &podcasts.Enclosure{
 				URL:    e.URL,

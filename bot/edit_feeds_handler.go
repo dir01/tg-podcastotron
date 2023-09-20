@@ -23,6 +23,7 @@ const editFeedsHelp = `
 `
 
 func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	var editFeedsHelp = editFeedsHelp
 	chatID := ub.extractChatID(update)
 	userID := ub.extractUserID(update)
 
@@ -45,12 +46,20 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 		return
 	}
 
+	feed, err := ub.service.GetFeed(ctx, userID, feedID)
+	if err != nil {
+		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get feed", zapFields...))
+		return
+	}
+
 	zapFields = append(zapFields, zap.String("feed_id", feedID))
 
 	prefix := fmt.Sprintf("editFeed_%s_%s", userID, bot.RandomString(10))
 	cmdRename := "rename"
 	cmdDeleteFeed := "deleteFeed"
 	cmdDeleteFeedAndEpisodes := "deleteFeedAndEpisodes"
+	cmdMakePermanent := "makePermanent"
+	cmdMakeEphemeral := "makeEphemeral"
 
 	kb := [][]models.InlineKeyboardButton{
 		{{
@@ -65,6 +74,23 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 			Text:         "Delete Feed and Episodes",
 			CallbackData: prefix + cmdDeleteFeedAndEpisodes,
 		}},
+	}
+
+	if isAdmin, _ := ub.auth.IsAdmin(ctx, ub.extractUsername(update)); isAdmin {
+		editFeedsHelp += `- <b>Mark Permanent</b>/<b>Mark Ephemeral</b> - choose whether or not episodes should be auto-deleted after 30 days
+`
+		switch feed.IsPermanent {
+		case true:
+			kb = append(kb, []models.InlineKeyboardButton{{
+				Text:         "Make Ephemeral",
+				CallbackData: prefix + cmdMakeEphemeral,
+			}})
+		case false:
+			kb = append(kb, []models.InlineKeyboardButton{{
+				Text:         "Make Permanent",
+				CallbackData: prefix + cmdMakePermanent,
+			}})
+		}
 	}
 
 	initialMessage, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
@@ -90,6 +116,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 		st := strings.ReplaceAll(update.CallbackQuery.Data, prefix, "")
 
 		switch st {
+
 		case cmdRename:
 			if renamePromptMsg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 				ChatID:      chatID,
@@ -123,6 +150,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 						deleteInitialMessage()
 					})
 			}
+
 		case cmdDeleteFeed, cmdDeleteFeedAndEpisodes:
 			shouldDeleteEpisodes := st == cmdDeleteFeedAndEpisodes
 
@@ -138,6 +166,26 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 				replyText += "All episodes are left in your library"
 			}
 			ub.sendTextMessage(ctx, chatID, replyText)
+
+			deleteInitialMessage()
+
+		case cmdMakePermanent:
+			if err := ub.service.MarkFeedAsPermanent(ctx, userID, feedID); err != nil {
+				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to mark feed as permanent", zapFields...))
+				return
+			}
+
+			ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed #%s (%s) was marked as permanent", feedID, feed.Title))
+
+			deleteInitialMessage()
+
+		case cmdMakeEphemeral:
+			if err := ub.service.MarkFeedAsEphemeral(ctx, userID, feedID); err != nil {
+				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to mark feed as ephemeral", zapFields...))
+				return
+			}
+
+			ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed #%s (%s) was marked as ephemeral", feedID, feed.Title))
 
 			deleteInitialMessage()
 		}

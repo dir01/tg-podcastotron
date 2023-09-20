@@ -68,7 +68,8 @@ type Episode struct {
 	ID              string
 	UserID          string
 	Title           string
-	PubDate         time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	SourceURL       string
 	SourceFilepaths []string
 	MediaryID       string
@@ -96,11 +97,12 @@ const (
 const DefaultFeedID = "1"
 
 type Feed struct {
-	ID         string
-	UserID     string
-	Title      string
-	URL        string
-	EpisodeIDs []string
+	ID          string
+	UserID      string
+	Title       string
+	URL         string
+	EpisodeIDs  []string
+	IsPermanent bool // whether episodes in this feed should be kept regardless or cleaned up after some time
 }
 
 type Publication struct {
@@ -278,11 +280,12 @@ func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL s
 		Title:           episodeTitle,
 		UserID:          userID,
 		SourceURL:       mediaURL,
+		CreatedAt:       time.Now().UTC(),
+		UpdatedAt:       time.Now().UTC(),
 		SourceFilepaths: variants,
 		StorageKey:      episodeKey,
 		URL:             stripQuery(presignURL),
 		MediaryID:       mediaryID,
-		PubDate:         time.Now(),
 		Duration:        0,     // should be populated later when job is complete
 		FileLenBytes:    0,     // should be populated later when job is complete
 		Format:          "mp3", // FIXME: hardcoded
@@ -527,6 +530,10 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 	return nil
 }
 
+func (svc *Service) GetFeed(ctx context.Context, userID string, feedID string) (*Feed, error) {
+	return svc.repository.GetFeed(ctx, userID, feedID)
+}
+
 func (svc *Service) RenameFeed(ctx context.Context, userID string, feedID string, newTitle string) error {
 	zapFields := []zap.Field{
 		zap.String("feed_id", feedID),
@@ -603,6 +610,36 @@ func (svc *Service) DeleteFeed(ctx context.Context, userID string, feedID string
 
 	if err := svc.repository.DeleteFeed(ctx, userID, feedID); err != nil {
 		return zaperr.Wrap(err, "failed to delete feed", zapFields...)
+	}
+
+	return nil
+}
+
+func (svc *Service) MarkFeedAsPermanent(ctx context.Context, userID string, feedID string) error {
+	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to get feed")
+	}
+
+	feed.IsPermanent = true
+
+	if _, err := svc.repository.SaveFeed(ctx, feed); err != nil {
+		return zaperr.Wrap(err, "failed to save feed")
+	}
+
+	return nil
+}
+
+func (svc *Service) MarkFeedAsEphemeral(ctx context.Context, userID string, feedID string) error {
+	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to get feed")
+	}
+
+	feed.IsPermanent = false
+
+	if _, err := svc.repository.SaveFeed(ctx, feed); err != nil {
+		return zaperr.Wrap(err, "failed to save feed")
 	}
 
 	return nil

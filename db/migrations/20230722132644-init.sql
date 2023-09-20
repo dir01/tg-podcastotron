@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS feeds (
     user_id TEXT REFERENCES users(id) NOT NULL,
     title TEXT,
     url TEXT,
+    is_permanent BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (id, user_id)
 );
 
@@ -20,7 +21,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     id TEXT NOT NULL,
     user_id TEXT REFERENCES users(id) NOT NULL,
     title TEXT NOT NULL,
-    pub_date INTEGER NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     source_url TEXT,
     source_filepaths TEXT,
     mediary_id TEXT,

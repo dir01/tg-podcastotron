@@ -201,11 +201,13 @@ func TestSqliteRepository__Feeds__Empty(t *testing.T) {
 func TestSqliteRepository__Episodes(t *testing.T) {
 	repo := getRepo(t)
 
+	var err error
 	episode1 := &Episode{
 		ID:              "episode1-id",
 		UserID:          "some-user-id",
 		Title:           "some-title",
-		PubDate:         time.Now().UTC(),
+		CreatedAt:       time.Now().UTC(),
+		UpdatedAt:       time.Now().UTC(),
 		SourceURL:       "some-source-url",
 		SourceFilepaths: []string{"some-source-filepath", "some-other-source-filepath"},
 		MediaryID:       "some-mediary-id",
@@ -216,29 +218,29 @@ func TestSqliteRepository__Episodes(t *testing.T) {
 		Format:          "some-format",
 		StorageKey:      "some-storage-key",
 	}
+	episode1, err = repo.SaveEpisode(context.Background(), episode1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	var episode2 *Episode
 	{
 		temp := *episode1
 		temp.ID = "episode2-id"
 		episode2 = &temp
 	}
+	episode2, err = repo.SaveEpisode(context.Background(), episode2)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	// region save 2 episodes and publish them to feed
-	for _, ep := range []*Episode{episode1, episode2} {
-		sep, err := repo.SaveEpisode(context.TODO(), ep)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(ep, sep) {
-			t.Errorf("original episode is %v, saved episode is %v", ep, sep)
-		}
-
-		if err := repo.BulkInsertPublications(context.TODO(), []*Publication{
-			{UserID: "some-user-id", FeedID: "some-feed-id", EpisodeID: ep.ID},
-			{UserID: "some-user-id", FeedID: "some-other-feed-id", EpisodeID: ep.ID},
-		}); err != nil {
-			t.Fatal(err)
-		}
+	if err := repo.BulkInsertPublications(context.TODO(), []*Publication{
+		{UserID: "some-user-id", FeedID: "some-feed-id", EpisodeID: episode1.ID},
+		{UserID: "some-user-id", FeedID: "some-other-feed-id", EpisodeID: episode1.ID},
+		{UserID: "some-user-id", FeedID: "some-feed-id", EpisodeID: episode2.ID},
+		{UserID: "some-user-id", FeedID: "some-other-feed-id", EpisodeID: episode2.ID},
+	}); err != nil {
+		t.Fatal(err)
 	}
 	// endregion
 
@@ -310,6 +312,79 @@ func TestSqliteRepository__Episodes(t *testing.T) {
 		t.Fatalf("expected episodes map to have 0 episodes, got %d", len(epMap))
 	}
 	// endregion
+}
+
+func TestSqliteRepository__ListExpiredEpisodes(t *testing.T) {
+	repo := getRepo(t)
+
+	expirationPeriod := 24 * time.Hour
+	expirationDate := time.Now().UTC().Add(-expirationPeriod)
+	userID := "some-user-id"
+
+	// region save a stale episode and a fresh episode
+	var err error
+	staleEpisode := &Episode{
+		ID:        "stale-episode-id",
+		UserID:    userID,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: expirationDate.Add(-time.Hour),
+	}
+	if staleEpisode, err = repo.SaveEpisode(context.Background(), staleEpisode); err != nil {
+		t.Fatal(err)
+	}
+
+	freshEpisode := &Episode{
+		ID:        "fresh-episode-id",
+		UserID:    userID,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: expirationDate.Add(time.Hour),
+	}
+	if freshEpisode, err = repo.SaveEpisode(context.Background(), freshEpisode); err != nil {
+		t.Fatal(err)
+	}
+	// endregion
+
+	// region list expired episodes
+	episodes, err := repo.ListExpiredEpisodes(context.Background(), expirationPeriod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(episodes) != 1 {
+		t.Fatalf("expected 1 expired episode, got %d", len(episodes))
+	}
+	if !reflect.DeepEqual(staleEpisode, episodes[0]) {
+		t.Errorf("expected expired episode to be\n%v\n, got\n%v", staleEpisode, episodes[0])
+	}
+	// endregion
+
+	// region publish episodes to permanent feed
+	permanentFeed := &Feed{
+		ID:          "permanent-feed-id",
+		UserID:      userID,
+		Title:       "feed-title",
+		IsPermanent: true,
+	}
+	if _, err := repo.SaveFeed(context.Background(), permanentFeed); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.BulkInsertPublications(context.Background(), []*Publication{
+		{UserID: userID, FeedID: permanentFeed.ID, EpisodeID: staleEpisode.ID},
+		{UserID: userID, FeedID: permanentFeed.ID, EpisodeID: freshEpisode.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// endregion
+
+	// region list expired episodes, should be empty
+	episodes, err = repo.ListExpiredEpisodes(context.Background(), expirationPeriod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(episodes) != 0 {
+		t.Fatalf("expected 0 expired episodes, got %d", len(episodes))
+	}
+	// endregion
+
 }
 
 func getRepo(t *testing.T) Repository {

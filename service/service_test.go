@@ -413,6 +413,7 @@ func TestService(t *testing.T) {
 
 func must[R any](result R, err error) func(t *testing.T) R {
 	return func(t *testing.T) R {
+		t.Helper()
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}

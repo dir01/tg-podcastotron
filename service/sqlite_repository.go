@@ -104,13 +104,14 @@ func (r *sqliteRepository) SaveFeed(ctx context.Context, feed *Feed) (*Feed, err
 	dbFeed := dbFeed{}.FromBusinessModel(feed)
 
 	if _, err := sqlx.NamedExecContext(ctx, db, `
-			INSERT INTO feeds (id, user_id, title, url) 
-			VALUES (:id, :user_id, :title, :url)
+			INSERT INTO feeds (id, user_id, title, url, is_permanent) 
+			VALUES (:id, :user_id, :title, :url, :is_permanent)
 			ON CONFLICT (user_id, id) DO UPDATE SET 
 				user_id=:user_id,
 				title=:title,
-				url=:url`, dbFeed,
-	); err != nil {
+				url=:url,
+				is_permanent=:is_permanent
+	`, dbFeed); err != nil {
 		return nil, zaperr.Wrap(err, "failed to insert feed")
 	}
 
@@ -186,7 +187,7 @@ func (r *sqliteRepository) GetFeedsMap(ctx context.Context, userID string, feedI
 func (r *sqliteRepository) ListUserFeeds(ctx context.Context, userID string) ([]*Feed, error) {
 	var dbFeeds []dbFeed
 	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &dbFeeds, `
-		SELECT * FROM feeds WHERE user_id = ? ORDER BY id ASC`, userID,
+		SELECT * FROM feeds WHERE user_id = ? ORDER BY id`, userID,
 	); err != nil {
 		return nil, zaperr.Wrap(err, "failed to list user feeds")
 	}
@@ -221,7 +222,8 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 				id,
 				user_id,
 				title, 
-				pub_date, 
+			  	created_at,
+				updated_at, 
 				source_url, 
 				source_filepaths, 
 				mediary_id, 
@@ -235,7 +237,8 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 				:id,
 				:user_id,
 				:title,
-				:pub_date,
+		        :created_at,
+				:updated_at,
 				:source_url,
 				:source_filepaths,
 				:mediary_id,
@@ -247,7 +250,7 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 				:storage_key
 	  	) ON CONFLICT (user_id, id) DO UPDATE SET
 				title = :title,
-				pub_date = :pub_date,
+				updated_at = :updated_at,
 				source_url = :source_url,
 				source_filepaths = :source_filepaths,
 				mediary_id = :mediary_id,
@@ -259,6 +262,11 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 				storage_key = :storage_key`, dbEp,
 	); err != nil {
 		return nil, zaperr.Wrap(err, "failed to insert ep")
+	}
+
+	ep, err = dbEp.ToBusinessModel()
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to convert to business model")
 	}
 
 	return ep, nil
@@ -421,10 +429,20 @@ func (r *sqliteRepository) DeleteEpisodes(ctx context.Context, userID string, ep
 func (r *sqliteRepository) ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error) {
 	db := r.dbFromContext(ctx)
 
+	minUpdatedAt := timeToStr(time.Now().UTC().Add(-maxAge))
 	query, args, err := sqlx.Named(`
-		SELECT * FROM episodes WHERE episodes.pub_date < :min_created_at
+		SELECT e.* FROM episodes e
+		WHERE e.updated_at < :min_updated_at
+		AND NOT EXISTS (
+			SELECT 1
+			FROM publications p
+			JOIN feeds f ON p.feed_id = f.id AND p.user_id = f.user_id
+			WHERE f.is_permanent = true
+			AND p.episode_id = e.id
+			AND p.user_id = e.user_id
+		)
 	`, map[string]interface{}{
-		"min_created_at": time.Now().Add(-maxAge),
+		"min_updated_at": minUpdatedAt,
 	})
 	if err != nil {
 		return nil, zaperr.Wrap(err, "failed to create query")
@@ -610,7 +628,8 @@ type dbEpisode struct {
 	ID              string        `db:"id"`
 	UserID          string        `db:"user_id"`
 	Title           string        `db:"title"`
-	PubDate         string        `db:"pub_date"`
+	CreatedAt       string        `db:"created_at"`
+	UpdatedAt       string        `db:"updated_at"`
 	SourceURL       string        `db:"source_url"`
 	SourceFilepaths string        `db:"source_filepaths"`
 	MediaryID       string        `db:"mediary_id"`
@@ -626,14 +645,18 @@ func (dbEpisode) FromBusinessModel(ep *Episode) (*dbEpisode, error) {
 	if ep == nil {
 		return nil, fmt.Errorf("ep is nil")
 	}
-	if ep.PubDate.IsZero() {
-		return nil, fmt.Errorf("pub date is zero")
+	if ep.CreatedAt.IsZero() {
+		return nil, fmt.Errorf(".CreatedAt is zero")
+	}
+	if ep.UpdatedAt.IsZero() {
+		return nil, fmt.Errorf(".UpdatedAt is zero")
 	}
 	return &dbEpisode{
 		ID:              ep.ID,
 		UserID:          ep.UserID,
 		Title:           ep.Title,
-		PubDate:         ep.PubDate.Format(time.RFC3339Nano),
+		CreatedAt:       timeToStr(ep.CreatedAt),
+		UpdatedAt:       timeToStr(ep.UpdatedAt),
 		SourceURL:       ep.SourceURL,
 		SourceFilepaths: strings.Join(ep.SourceFilepaths, ","),
 		MediaryID:       ep.MediaryID,
@@ -647,17 +670,29 @@ func (dbEpisode) FromBusinessModel(ep *Episode) (*dbEpisode, error) {
 }
 
 func (d dbEpisode) ToBusinessModel() (*Episode, error) {
-	pubDate, err := time.Parse(time.RFC3339Nano, d.PubDate)
+	createdAt, err := strToTime(d.CreatedAt)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to parse pub date")
+		return nil, zaperr.Wrap(err, "failed to parse created_at")
 	}
+
+	updatedAt, err := strToTime(d.UpdatedAt)
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to parse updated_at")
+	}
+
+	var sourceFilePaths []string
+	if d.SourceFilepaths != "" {
+		sourceFilePaths = strings.Split(d.SourceFilepaths, ",")
+	}
+
 	return &Episode{
 		ID:              d.ID,
 		UserID:          d.UserID,
 		Title:           d.Title,
-		PubDate:         pubDate,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
 		SourceURL:       d.SourceURL,
-		SourceFilepaths: strings.Split(d.SourceFilepaths, ","),
+		SourceFilepaths: sourceFilePaths,
 		MediaryID:       d.MediaryID,
 		URL:             d.URL,
 		Status:          EpisodeStatus(d.Status),
@@ -673,27 +708,30 @@ func (d dbEpisode) ToBusinessModel() (*Episode, error) {
 // region dbFeed
 
 type dbFeed struct {
-	ID     string `db:"id"`
-	UserID string `db:"user_id"`
-	Title  string `db:"title"`
-	URL    string `db:"url"`
+	ID          string `db:"id"`
+	UserID      string `db:"user_id"`
+	Title       string `db:"title"`
+	URL         string `db:"url"`
+	IsPermanent bool   `db:"is_permanent"`
 }
 
 func (f dbFeed) FromBusinessModel(feed *Feed) interface{} {
 	return dbFeed{
-		ID:     feed.ID,
-		UserID: feed.UserID,
-		Title:  feed.Title,
-		URL:    feed.URL,
+		ID:          feed.ID,
+		UserID:      feed.UserID,
+		Title:       feed.Title,
+		URL:         feed.URL,
+		IsPermanent: feed.IsPermanent,
 	}
 }
 
 func (f dbFeed) ToBusinessModel() (*Feed, error) {
 	return &Feed{
-		ID:     f.ID,
-		UserID: f.UserID,
-		Title:  f.Title,
-		URL:    f.URL,
+		ID:          f.ID,
+		UserID:      f.UserID,
+		Title:       f.Title,
+		URL:         f.URL,
+		IsPermanent: f.IsPermanent,
 	}, nil
 }
 
@@ -702,11 +740,11 @@ func (f dbFeed) ToBusinessModel() (*Feed, error) {
 // region dbPublication
 
 type dbPublication struct {
-	ID        string    `db:"id"`
-	UserID    string    `db:"user_id"`
-	EpisodeID string    `db:"episode_id"`
-	FeedID    string    `db:"feed_id"`
-	CreatedAt time.Time `db:"created_at"`
+	ID        string `db:"id"`
+	UserID    string `db:"user_id"`
+	EpisodeID string `db:"episode_id"`
+	FeedID    string `db:"feed_id"`
+	CreatedAt string `db:"created_at"`
 }
 
 func (dbPublication) FromBusinessModel(p *Publication) *dbPublication {
@@ -715,18 +753,42 @@ func (dbPublication) FromBusinessModel(p *Publication) *dbPublication {
 		UserID:    p.UserID,
 		EpisodeID: p.EpisodeID,
 		FeedID:    p.FeedID,
-		CreatedAt: p.CreatedAt,
+		CreatedAt: timeToStr(p.CreatedAt),
 	}
 }
 
 func (p dbPublication) ToBusinessModel() (*Publication, error) {
+	createdAt, err := strToTime(p.CreatedAt)
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to parse created at")
+	}
 	return &Publication{
 		ID:        p.ID,
 		UserID:    p.UserID,
 		EpisodeID: p.EpisodeID,
 		FeedID:    p.FeedID,
-		CreatedAt: p.CreatedAt,
+		CreatedAt: createdAt,
 	}, nil
+}
+
+// endregion
+
+// region dates
+
+// SQLite's recommended datetime format is the textual format "YYYY-MM-DD HH:MM:SS"
+// But somehow it doesn't work well with sqlx: what I get back looks like 2023-09-20T09:52:07Z
+const sqliteTimeFormat = time.RFC3339
+
+func timeToStr(t time.Time) string {
+	return t.UTC().Format(sqliteTimeFormat)
+}
+
+func strToTime(s string) (time.Time, error) {
+	t, err := time.Parse(sqliteTimeFormat, s)
+	if err != nil {
+		return time.Time{}, zaperr.Wrap(err, "failed to parse time")
+	}
+	return t.UTC(), nil
 }
 
 // endregion
