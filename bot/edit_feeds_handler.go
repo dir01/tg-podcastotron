@@ -60,6 +60,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 	cmdDeleteFeedAndEpisodes := "deleteFeedAndEpisodes"
 	cmdMakePermanent := "makePermanent"
 	cmdMakeEphemeral := "makeEphemeral"
+	cmdRegenerateFeed := "regenerateFeed"
 
 	kb := [][]models.InlineKeyboardButton{
 		{{
@@ -78,6 +79,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 
 	if isAdmin, _ := ub.auth.IsAdmin(ctx, ub.extractUsername(update)); isAdmin {
 		editFeedsHelp += `- <b>Mark Permanent</b>/<b>Mark Ephemeral</b> - choose whether or not episodes should be auto-deleted after 30 days
+- <b>Regenerate Feed</b> - regenerate feed XML file
 `
 		switch feed.IsPermanent {
 		case true:
@@ -91,6 +93,11 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 				CallbackData: prefix + cmdMakePermanent,
 			}})
 		}
+
+		kb = append(kb, []models.InlineKeyboardButton{{
+			Text:         "Regenerate Feed",
+			CallbackData: prefix + cmdRegenerateFeed,
+		}})
 	}
 
 	initialMessage, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
@@ -186,6 +193,16 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 			}
 
 			ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed #%s (%s) was marked as ephemeral", feedID, feed.Title))
+
+			deleteInitialMessage()
+
+		case cmdRegenerateFeed:
+			if err := ub.service.RegenerateFeed(ctx, userID, feedID); err != nil {
+				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to regenerate feed", zapFields...))
+				return
+			}
+
+			ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed #%s (%s) was regenerated", feedID, feed.Title))
 
 			deleteInitialMessage()
 		}

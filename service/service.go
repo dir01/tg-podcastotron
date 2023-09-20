@@ -693,6 +693,17 @@ func (svc *Service) ListExpiredEpisodes(ctx context.Context, maxAge time.Duratio
 	return svc.repository.ListExpiredEpisodes(ctx, maxAge)
 }
 
+func (svc *Service) RegenerateFeed(ctx context.Context, userID string, feedID string) error {
+	if err := svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
+		UserID:  userID,
+		FeedIDs: []string{feedID},
+	}); err != nil {
+		return zaperr.Wrap(err, "failed to publish regenerate feed job", zap.String("feed_id", feedID), zap.String("user_id", userID))
+	}
+
+	return nil
+}
+
 func (svc *Service) createFeed(ctx context.Context, userID string, title string, feedID string) (*Feed, error) {
 	var err error
 	if feedID == "" {
