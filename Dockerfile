@@ -7,6 +7,8 @@ ENV GOPATH ""
 RUN go mod download
 
 ADD . .
+
+RUN make install-dev  # so that the same image could be used to run migrations
 RUN make build
 
 CMD bin/bot
