@@ -2,3 +2,8 @@ bin/*
 .env*
 !.env.example
 vendor/
+db/sqlite.db
+db/.sqlite.db-litestream
+db/sqlite.db-shm
+db/sqlite.db-wal
+litestream.yaml

@@ -116,7 +116,15 @@ func (svc *service) FetchMetadataLongPolling(ctx context.Context, mediaURL strin
 	fullURL := fmt.Sprintf("%s/metadata/long-polling?url=%s", svc.baseURL, mediaURL)
 	svc.logger.Debug("fetching metadata", zap.String("url", fullURL))
 
-	resp, err := http.Get(fullURL)
+	bodyBytes, err := json.Marshal(map[string]string{
+		"url": mediaURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	reqBody := bytes.NewBufferString(string(bodyBytes))
+	resp, err := http.Post(fullURL, "application/json", reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call mediary API: %w", err)
 	}

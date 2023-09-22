@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -13,23 +14,34 @@ import (
 	"tg-podcastotron/service"
 )
 
-func NewUndercastBot(token string, auth *auth.Service, botStore *RedisStore, service *service.Service, logger *zap.Logger) *UndercastBot {
+func NewUndercastBot(
+	token string,
+	auth *auth.Service,
+	repository Repository,
+	service *service.Service,
+	logger *zap.Logger,
+) *UndercastBot {
 	return &UndercastBot{
-		logger:  logger,
-		token:   token,
-		auth:    auth,
-		service: service,
-		store:   botStore,
+		logger:     logger,
+		token:      token,
+		auth:       auth,
+		service:    service,
+		repository: repository,
 	}
 }
 
+type Repository interface {
+	SetChatID(ctx context.Context, userID string, chatID int64) error
+	GetChatID(ctx context.Context, userID string) (int64, error)
+}
+
 type UndercastBot struct {
-	logger  *zap.Logger
-	token   string
-	bot     *bot.Bot
-	auth    *auth.Service
-	service *service.Service
-	store   *RedisStore
+	logger     *zap.Logger
+	token      string
+	bot        *bot.Bot
+	auth       *auth.Service
+	service    *service.Service
+	repository Repository
 
 	episodesStatusChangesChan chan []service.EpisodeStatusChange
 }
@@ -52,6 +64,8 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 		}
 	}()
 
+	go ub.pollExpiredEpisodes(ctx, time.NewTicker(24*time.Hour), 30*24*time.Hour)
+
 	var err error
 	ub.bot, err = bot.New(ub.token, opts...)
 	if err != nil {
@@ -66,12 +80,46 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ef", bot.MatchTypePrefix, ub.editFeedsHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/nf", bot.MatchTypeExact, ub.newFeedHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/adduser", bot.MatchTypeExact, ub.addUserHandler)
-	ub.bot.RegisterHandlerMatchFunc(bot.HandlerTypeMessageText, func(update *models.Update) bool {
+	ub.bot.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		return update != nil && update.Message != nil && update.Message.Contact != nil
 	}, ub.addUserHandler)
 	ub.bot.Start(ctx)
 
 	return nil
+}
+
+func (ub *UndercastBot) pollExpiredEpisodes(
+	ctx context.Context,
+	pollingTicker *time.Ticker,
+	epExpirationAge time.Duration,
+) {
+	ub.logger.Info("starting expired episodes poller")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-pollingTicker.C:
+			ub.logger.Info("listing expired episodes")
+			expiredEps, err := ub.service.ListExpiredEpisodes(ctx, epExpirationAge)
+			if err != nil {
+				ub.logger.Error("error while listing expired episodes", zaperr.ToField(err))
+				continue
+			}
+
+			for _, ep := range expiredEps {
+				if err := ub.service.DeleteEpisodes(ctx, ep.UserID, []string{ep.ID}); err != nil {
+					ub.logger.Error("error while deleting episode", zaperr.ToField(err))
+				} else {
+					ub.logger.Info(
+						"deleted episode",
+						zap.String("id", ep.ID),
+						zap.String("title", ep.Title),
+						zap.String("url", ep.URL),
+					)
+				}
+			}
+		}
+	}
 }
 
 func (ub *UndercastBot) handleError(ctx context.Context, chatID int64, err error) {

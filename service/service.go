@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,13 +24,37 @@ type S3Store interface {
 	PreSignedURL(key string) (string, error)
 	Put(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*PutOptions)) error
 	Delete(ctx context.Context, key string) error
+	URL(key string) (url string, err error)
+}
+
+type Repository interface {
+	NextFeedID(ctx context.Context, userID string) (feedID string, err error)
+	SaveFeed(ctx context.Context, feed *Feed) (*Feed, error)
+	GetFeed(ctx context.Context, userID, feedID string) (*Feed, error)
+	ListUserFeeds(ctx context.Context, userID string) ([]*Feed, error)
+	GetFeedsMap(ctx context.Context, userID string, feedIDs []string) (map[string]*Feed, error)
+	DeleteFeed(ctx context.Context, userID string, feedIDs string) error
+
+	NextEpisodeID(ctx context.Context, userID string) (epID string, err error)
+	SaveEpisode(ctx context.Context, episode *Episode) (*Episode, error)
+	ListUserEpisodes(ctx context.Context, userID string) ([]*Episode, error)
+	ListFeedEpisodes(ctx context.Context, userID, feedID string) ([]*Episode, error)
+	GetEpisodesMap(ctx context.Context, userID string, episodeIDs []string) (map[string]*Episode, error)
+	DeleteEpisodes(ctx context.Context, userID string, episodeIDs []string) error
+	ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error)
+
+	BulkInsertPublications(ctx context.Context, publications []*Publication) error
+	ListPublicationsByEpisodeIDs(ctx context.Context, userID string, episodeIDs []string) ([]*Publication, error)
+	DeletePublications(ctx context.Context, userID string, publicationIDs []string) error
+
+	Transaction(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
 type Service struct {
 	logger       *zap.Logger
 	s3Store      S3Store
 	mediaSvc     mediary.Service
-	repository   *Repository
+	repository   Repository
 	jobsQueue    *jobsqueue.RJQ
 	obfuscateIDs func(string) string
 
@@ -43,9 +66,10 @@ type Metadata = mediary.Metadata
 
 type Episode struct {
 	ID              string
-	Title           string
-	PubDate         time.Time
 	UserID          string
+	Title           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	SourceURL       string
 	SourceFilepaths []string
 	MediaryID       string
@@ -70,12 +94,23 @@ const (
 	EpisodeStatusComplete    EpisodeStatus = "complete"
 )
 
+const DefaultFeedID = "1"
+
 type Feed struct {
-	ID         string
-	UserID     string
-	Title      string
-	URL        string
-	EpisodeIDs []string
+	ID          string
+	UserID      string
+	Title       string
+	URL         string
+	EpisodeIDs  []string
+	IsPermanent bool // whether episodes in this feed should be kept regardless or cleaned up after some time
+}
+
+type Publication struct {
+	ID        string
+	UserID    string
+	FeedID    string
+	EpisodeID string
+	CreatedAt time.Time
 }
 
 var (
@@ -83,17 +118,16 @@ var (
 		1 * time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second,
 		40 * time.Second, 60 * time.Second, 120 * time.Second, 240 * time.Second,
 	}
-	ErrFeedNotFound            = fmt.Errorf("feed not found")
-	ErrEpisodeNotFound         = fmt.Errorf("episode not found")
-	ErrNotImplemented          = fmt.Errorf("not implemented")
-	ErrCannotDeleteDefaultFeed = fmt.Errorf("cannot delete default feed")
+	ErrFeedNotFound    = fmt.Errorf("feed not found")
+	ErrEpisodeNotFound = fmt.Errorf("episode not found")
+	ErrNotImplemented  = fmt.Errorf("not implemented")
 )
 
 const maxPollEpisodesRequeueCount = 100
 
 func New(
 	mediaSvc mediary.Service,
-	repository *Repository,
+	repository Repository,
 	s3Store S3Store,
 	jobsQueue *jobsqueue.RJQ,
 	defaultFeedTitle string,
@@ -101,7 +135,7 @@ func New(
 	logger *zap.Logger,
 ) *Service {
 	if defaultFeedTitle == "" {
-		defaultFeedTitle = "Podcastotron"
+		defaultFeedTitle = "Podcast-O-Tron"
 	}
 	return &Service{
 		logger:                   logger,
@@ -141,7 +175,13 @@ func (svc *Service) FetchMetadata(ctx context.Context, mediaURL string) (*Metada
 	}, metadataDelays...)
 }
 
-func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, variantsPerEpisode [][]string, processingType ProcessingType, userID string) error {
+func (svc *Service) CreateEpisodesAsync(
+	ctx context.Context,
+	userID string,
+	url string,
+	variantsPerEpisode [][]string,
+	processingType ProcessingType,
+) error {
 	zapFields := []zap.Field{
 		zap.String("url", url),
 		zap.Any("variants_per_episode", variantsPerEpisode),
@@ -163,9 +203,9 @@ func (svc *Service) CreateEpisodesAsync(ctx context.Context, url string, variant
 	return nil
 }
 
-func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, variants []string, processingType ProcessingType, userID string) (*Episode, error) {
+func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL string, variants []string, processingType ProcessingType) (*Episode, error) {
 	filename := uuid.New().String() + ".mp3" // TODO: implement more elaborate filename generation
-	episodeKey := path.Join(svc.getUserKeyPrefix(userID), "episodes", filename)
+	episodeKey := svc.constructS3EpisodeKey(userID, filename)
 
 	zapFields := []zap.Field{
 		zap.String("media_url", mediaURL),
@@ -230,15 +270,22 @@ func (svc *Service) CreateEpisode(ctx context.Context, mediaURL string, variants
 		return nil, zaperr.Wrap(ErrNotImplemented, "unsupported downloader while generating episode title", zapFields...)
 	}
 
+	epID, err := svc.repository.NextEpisodeID(ctx, userID)
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to get next episode id", zapFields...)
+	}
+
 	ep := &Episode{
+		ID:              epID,
 		Title:           episodeTitle,
 		UserID:          userID,
 		SourceURL:       mediaURL,
+		CreatedAt:       time.Now().UTC(),
+		UpdatedAt:       time.Now().UTC(),
 		SourceFilepaths: variants,
 		StorageKey:      episodeKey,
 		URL:             stripQuery(presignURL),
 		MediaryID:       mediaryID,
-		PubDate:         time.Now(),
 		Duration:        0,     // should be populated later when job is complete
 		FileLenBytes:    0,     // should be populated later when job is complete
 		Format:          "mp3", // FIXME: hardcoded
@@ -260,7 +307,7 @@ func (svc *Service) IsValidURL(ctx context.Context, mediaURL string) (bool, erro
 	}
 }
 
-func (svc *Service) ListEpisodes(ctx context.Context, userID string) ([]*Episode, error) {
+func (svc *Service) ListUserEpisodes(ctx context.Context, userID string) ([]*Episode, error) {
 	if episodes, err := svc.repository.ListUserEpisodes(ctx, userID); err == nil {
 		return episodes, nil
 	} else {
@@ -268,8 +315,8 @@ func (svc *Service) ListEpisodes(ctx context.Context, userID string) ([]*Episode
 	}
 }
 
-func (svc *Service) GetEpisodesMap(ctx context.Context, ids []string, userID string) (map[string]*Episode, error) {
-	if episodes, err := svc.repository.GetEpisodesMap(ctx, ids, userID); err == nil {
+func (svc *Service) GetEpisodesMap(ctx context.Context, userID string, ids []string) (map[string]*Episode, error) {
+	if episodes, err := svc.repository.GetEpisodesMap(ctx, userID, ids); err == nil {
 		return episodes, nil
 	} else {
 		return nil, zaperr.Wrap(ErrEpisodeNotFound, "failed to get episodes map", zap.Strings("ids", ids), zaperr.ToField(err))
@@ -287,7 +334,7 @@ func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, erro
 	}
 
 	for _, f := range feeds {
-		if f.ID == strconv.Itoa(DefaultFeedID) {
+		if f.ID == DefaultFeedID {
 			return feeds, nil // if default feed is present, we're all set
 		}
 	}
@@ -302,18 +349,9 @@ func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, erro
 	return feeds, nil
 }
 
-func (svc *Service) GetFeedsMap(ctx context.Context, feedIDs []string, userID string) (map[string]*Feed, error) {
-	feeds, err := svc.repository.GetFeedsMap(ctx, feedIDs, userID)
-	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get feeds map", zap.Strings("feed_ids", feedIDs))
-	}
-	return feeds, nil
-}
-
 func (svc *Service) DefaultFeed(ctx context.Context, userID string) (*Feed, error) {
-	defaultFeedID := "1"
 
-	existing, err := svc.repository.GetFeed(ctx, defaultFeedID, userID)
+	existing, err := svc.repository.GetFeed(ctx, userID, DefaultFeedID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get default feed: %w", err)
 	}
@@ -321,7 +359,7 @@ func (svc *Service) DefaultFeed(ctx context.Context, userID string) (*Feed, erro
 		return existing, nil
 	}
 
-	created, err := svc.createFeed(ctx, userID, svc.defaultFeedTitle, defaultFeedID)
+	created, err := svc.createFeed(ctx, userID, svc.defaultFeedTitle, DefaultFeedID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default feed: %w", err)
 	}
@@ -333,99 +371,68 @@ func (svc *Service) CreateFeed(ctx context.Context, userID string, title string)
 	return svc.createFeed(ctx, userID, title, "")
 }
 
-func (svc *Service) PublishEpisodes(ctx context.Context, episodeIDs []string, feedIDs []string, userID string) error {
+func (svc *Service) PublishEpisodes(ctx context.Context, userID string, episodeIDs []string, feedIDs []string) error {
 	zapFields := []zap.Field{
 		zap.Strings("episode_ids", episodeIDs),
 		zap.Strings("feed_ids", feedIDs),
 		zap.String("user_id", userID),
 	}
 
-	episodes := make([]*Episode, 0, len(episodeIDs))
-	episodesMap, err := svc.repository.GetEpisodesMap(ctx, episodeIDs, userID)
-	if err != nil {
-		return zaperr.Wrap(err, "failed to set episodes feeds", zapFields...)
-	}
-	for _, epID := range episodeIDs {
-		episodes = append(episodes, episodesMap[epID])
-	}
+	changedFeedIDs := make([]string, 0, 10)
 
-	desiredFeeds := make([]*Feed, 0, len(feedIDs))
-	desiredFeedsMap, err := svc.repository.GetFeedsMap(ctx, feedIDs, userID)
-	if err != nil {
-		return zaperr.Wrap(err, "failed to set episodes feeds", zapFields...)
-	}
-	for _, feedID := range feedIDs {
-		desiredFeeds = append(desiredFeeds, desiredFeedsMap[feedID])
-	}
-
-	existingFeedIDs := make(map[string]struct{}, len(episodes)*2)
-	for _, ep := range episodes {
-		for _, feedID := range ep.FeedIDs {
-			existingFeedIDs[feedID] = struct{}{}
+	if err := svc.repository.Transaction(ctx, func(ctx context.Context) error {
+		existing, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, episodeIDs)
+		if err != nil {
+			return zaperr.Wrap(err, "failed to list publicationsToCreate by episode ids")
 		}
-	}
-	existingFeedsMap, err := svc.repository.GetFeedsMap(ctx, maps.Keys(existingFeedIDs), userID)
 
-	changedEpisodes := make(map[*Episode]struct{}, len(episodes))
-	changedFeeds := make(map[*Feed]struct{}, len(desiredFeeds))
+		changedFeedsMap := make(map[string]struct{}, len(feedIDs))
 
-	for _, ep := range episodes {
-		// region unpublish
-		for _, existingFeedID := range ep.FeedIDs {
-			if _, ok := desiredFeedsMap[existingFeedID]; !ok {
-				// remove episode from feed
-				existingFeed := existingFeedsMap[existingFeedID]
-				existingFeed.EpisodeIDs = remove(existingFeed.EpisodeIDs, ep.ID)
-				changedFeeds[existingFeed] = struct{}{}
-				// remove feed from episode
-				ep.FeedIDs = remove(ep.FeedIDs, existingFeedID)
-				changedEpisodes[ep] = struct{}{}
+		publicationsToDelete := make([]string, 0, len(existing))
+
+		type key struct {
+			episodeID string
+			feedID    string
+		}
+		existingPublicationsMap := make(map[key]struct{}, len(existing))
+
+		for _, p := range existing {
+			existingPublicationsMap[key{episodeID: p.EpisodeID, feedID: p.FeedID}] = struct{}{}
+			if !slices.Contains(feedIDs, p.FeedID) {
+				publicationsToDelete = append(publicationsToDelete, p.ID)
+				changedFeedsMap[p.FeedID] = struct{}{}
 			}
 		}
-		// endregion
 
-		for _, desiredFeed := range desiredFeeds {
-			if slices.Contains(ep.FeedIDs, desiredFeed.ID) {
-				continue
-			}
-			// we know this feed will change,
-			// but we'll do it later to preserve order
-			changedFeeds[desiredFeed] = struct{}{}
-			// add feed to episode
-			ep.FeedIDs = append(ep.FeedIDs, desiredFeed.ID)
-			changedEpisodes[ep] = struct{}{}
-		}
-	}
-
-	// region publish
-	for _, f := range desiredFeeds {
-		for _, ep := range episodes {
-			if !slices.Contains(f.EpisodeIDs, ep.ID) {
-				f.EpisodeIDs = append(f.EpisodeIDs, ep.ID)
+		publicationsToCreate := make([]*Publication, 0, len(episodeIDs)*len(feedIDs))
+		for _, epID := range episodeIDs {
+			for _, feedID := range feedIDs {
+				if _, ok := existingPublicationsMap[key{episodeID: epID, feedID: feedID}]; ok {
+					continue
+				}
+				publicationsToCreate = append(publicationsToCreate, &Publication{
+					UserID:    userID,
+					FeedID:    feedID,
+					EpisodeID: epID,
+					CreatedAt: time.Now(),
+				})
+				changedFeedsMap[feedID] = struct{}{}
 			}
 		}
-		changedFeeds[f] = struct{}{}
-	}
-	// endregion
 
-	for ep, _ := range changedEpisodes {
-		if _, err = svc.repository.SaveEpisode(ctx, ep); err != nil {
-			return zaperr.Wrap(err, "failed to update episode feed ids", zapFields...)
+		if err := svc.repository.DeletePublications(ctx, userID, publicationsToDelete); err != nil {
+			return zaperr.Wrap(err, "failed to delete existing publications")
 		}
-	}
 
-	for feed, _ := range changedFeeds {
-		if _, err = svc.repository.SaveFeed(ctx, feed); err != nil {
-			return zaperr.Wrap(err, "failed to update feed episode ids", zapFields...)
+		if err := svc.repository.BulkInsertPublications(ctx, publicationsToCreate); err != nil {
+			return zaperr.Wrap(err, "failed to bulk insert publicationsToCreate")
 		}
+		return nil
+	}); err != nil {
+		return zaperr.Wrap(err, "failed to publish episodes", zapFields...)
 	}
 
-	changedFeedIDs := make([]string, 0, len(changedFeeds))
-	for feed, _ := range changedFeeds {
-		changedFeedIDs = append(changedFeedIDs, feed.ID)
-	}
-
-	if err = svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
+	if err := svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
 		UserID:  userID,
 		FeedIDs: changedFeedIDs,
 	}); err != nil {
@@ -435,16 +442,25 @@ func (svc *Service) PublishEpisodes(ctx context.Context, episodeIDs []string, fe
 	return nil
 }
 
-func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitlePattern string, userID string) error {
+func (svc *Service) RenameEpisodes(ctx context.Context, userID string, epIDs []string, newTitlePattern string) error {
 	zapFields := []zap.Field{
 		zap.Strings("episode_ids", epIDs),
 		zap.String("new_title_pattern", newTitlePattern),
 		zap.String("user_id", userID),
 	}
 
-	episodesMap, err := svc.repository.GetEpisodesMap(ctx, epIDs, userID)
+	episodesMap, err := svc.repository.GetEpisodesMap(ctx, userID, epIDs)
 	if err != nil {
 		return zaperr.Wrap(err, "failed to get episodes", zapFields...)
+	}
+
+	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to list publications", zapFields...)
+	}
+	epToFeedMap := make(map[string][]string, len(publications))
+	for _, p := range publications {
+		epToFeedMap[p.EpisodeID] = append(epToFeedMap[p.EpisodeID], p.FeedID)
 	}
 
 	feedsToUpdate := map[string]bool{}
@@ -456,8 +472,10 @@ func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitle
 			if _, err := svc.repository.SaveEpisode(ctx, ep); err != nil { // TODO: batch save
 				return zaperr.Wrap(err, "failed to save episode", zapFields...)
 			}
-			for _, feedID := range ep.FeedIDs {
-				feedsToUpdate[feedID] = true
+			if feedIDs, ok := epToFeedMap[ep.ID]; ok {
+				for _, feedID := range feedIDs {
+					feedsToUpdate[feedID] = true
+				}
 			}
 		}
 	}
@@ -474,58 +492,56 @@ func (svc *Service) RenameEpisodes(ctx context.Context, epIDs []string, newTitle
 	return nil
 }
 
-func (svc *Service) DeleteEpisodes(ctx context.Context, epIDs []string, userID string) error {
+func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []string) error {
 	zapFields := []zap.Field{
 		zap.Strings("episode_ids", epIDs),
 		zap.String("user_id", userID),
 	}
 
-	episodesMap, err := svc.GetEpisodesMap(ctx, epIDs, userID)
+	episodesMap, err := svc.GetEpisodesMap(ctx, userID, epIDs)
 	if err != nil {
 		return err
 	}
 
-	feedIDsMap := make(map[string]bool, len(episodesMap)*2)
-	for _, ep := range episodesMap {
-		for _, feedID := range ep.FeedIDs {
-			feedIDsMap[feedID] = true
-		}
-	}
-	feedIDs := maps.Keys(feedIDsMap)
-
-	zapFields = append(zapFields, zap.Strings("feed_ids", feedIDs))
-
-	feedsMap, err := svc.repository.GetFeedsMap(ctx, feedIDs, userID)
+	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get feeds map", zapFields...)
+		return zaperr.Wrap(err, "failed to list publications", zapFields...)
 	}
 
-	for _, f := range feedsMap {
-		f.EpisodeIDs = remove(f.EpisodeIDs, epIDs...)
-		if _, err := svc.repository.SaveFeed(ctx, f); err != nil { // TODO: batch save
-			return zaperr.Wrap(err, "failed to save feed", zapFields...)
-		}
+	publicationIDs := make([]string, 0, len(publications))
+	for _, p := range publications {
+		publicationIDs = append(publicationIDs, p.ID)
+	}
+
+	if err := svc.repository.DeletePublications(ctx, userID, publicationIDs); err != nil {
+		return zaperr.Wrap(err, "failed to delete publications", zapFields...)
 	}
 
 	for _, ep := range episodesMap {
-		svc.s3Store.Delete(ctx, svc.extractEpisodeS3Key(ep))
+		if err := svc.s3Store.Delete(ctx, svc.extractEpisodeS3Key(ep)); err != nil {
+			svc.logger.Error("failed to delete episode file", zaperr.ToField(err))
+		}
 	}
 
-	if err := svc.repository.DeleteEpisodes(ctx, epIDs, userID); err != nil {
+	if err := svc.repository.DeleteEpisodes(ctx, userID, epIDs); err != nil {
 		return zaperr.Wrap(err, "failed to delete episodes", zapFields...)
 	}
 
 	return nil
 }
 
-func (svc *Service) RenameFeed(ctx context.Context, feedID string, userID string, newTitle string) error {
+func (svc *Service) GetFeed(ctx context.Context, userID string, feedID string) (*Feed, error) {
+	return svc.repository.GetFeed(ctx, userID, feedID)
+}
+
+func (svc *Service) RenameFeed(ctx context.Context, userID string, feedID string, newTitle string) error {
 	zapFields := []zap.Field{
 		zap.String("feed_id", feedID),
 		zap.String("user_id", userID),
 		zap.String("new_title", newTitle),
 	}
 
-	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
+	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
 	if err != nil {
 		zapFields := append(zapFields, zaperr.ToField(err))
 		return zaperr.Wrap(ErrFeedNotFound, "", zapFields...)
@@ -546,67 +562,171 @@ func (svc *Service) RenameFeed(ctx context.Context, feedID string, userID string
 	return nil
 }
 
-func (svc *Service) DeleteFeed(ctx context.Context, feedID string, userID string, deleteEpisodes bool) error {
+func (svc *Service) DeleteFeed(ctx context.Context, userID string, feedID string, deleteEpisodes bool) error {
 	zapFields := []zap.Field{
 		zap.String("feed_id", feedID),
 		zap.String("user_id", userID),
 		zap.Bool("delete_episodes", deleteEpisodes),
 	}
 
-	if feedID == strconv.Itoa(DefaultFeedID) {
-		return zaperr.Wrap(ErrCannotDeleteDefaultFeed, "", zapFields...)
-	}
-
-	feed, err := svc.repository.GetFeed(ctx, feedID, userID)
+	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
 	if err != nil || feed == nil {
 		return zaperr.Wrap(err, "failed to find feed", zapFields...)
 	}
 
-	if deleteEpisodes {
-		if err := svc.DeleteEpisodes(ctx, feed.EpisodeIDs, userID); err != nil {
-			return zaperr.Wrap(err, "failed to delete episodes", zapFields...)
-		}
-	} else if eps, err := svc.repository.ListFeedEpisodes(ctx, feed); err != nil {
+	episodes, err := svc.repository.ListFeedEpisodes(ctx, feed.UserID, feed.ID)
+	if err != nil {
 		return zaperr.Wrap(err, "failed to list feed episodes", zapFields...)
-	} else {
-		for _, ep := range eps {
-			ep.FeedIDs = remove(ep.FeedIDs, feedID)
-			if _, err := svc.repository.SaveEpisode(ctx, ep); err != nil {
-				return zaperr.Wrap(err, "failed to save episode", zapFields...)
-			}
+	}
+
+	var epIDs []string
+	for _, ep := range episodes {
+		epIDs = append(epIDs, ep.ID)
+	}
+
+	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to list publications", zapFields...)
+	}
+	var publicationToDeleteIDs []string
+	for _, p := range publications {
+		if p.FeedID == feedID {
+			publicationToDeleteIDs = append(publicationToDeleteIDs, p.ID)
+		}
+	}
+	if err := svc.repository.DeletePublications(ctx, userID, publicationToDeleteIDs); err != nil {
+		return zaperr.Wrap(err, "failed to delete publications", zapFields...)
+	}
+
+	if deleteEpisodes {
+		if err := svc.DeleteEpisodes(ctx, userID, epIDs); err != nil {
+			return zaperr.Wrap(err, "failed to delete episodes", zapFields...)
 		}
 	}
 
-	if err := svc.s3Store.Delete(ctx, svc.constructS3FeedPath(userID, feedID)); err != nil {
+	if err := svc.s3Store.Delete(ctx, svc.constructS3FeedKey(userID, feedID)); err != nil {
 		return zaperr.Wrap(err, "failed to delete feed from s3", zapFields...)
 	}
 
-	if err := svc.repository.DeleteFeed(ctx, feedID, userID); err != nil {
+	if err := svc.repository.DeleteFeed(ctx, userID, feedID); err != nil {
 		return zaperr.Wrap(err, "failed to delete feed", zapFields...)
 	}
 
 	return nil
 }
 
-func (svc *Service) createFeed(ctx context.Context, userID string, title string, feedID string) (*Feed, error) {
-	if feedID == "" {
-		nextID, err := svc.repository.nextFeedID(ctx, userID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get next feed id: %w", err)
-		}
-		feedID = strconv.FormatInt(nextID, 10)
-	}
-	feedPath := svc.constructS3FeedPath(userID, feedID)
-	presignURL, err := svc.s3Store.PreSignedURL(feedPath)
+func (svc *Service) MarkFeedAsPermanent(ctx context.Context, userID string, feedID string) error {
+	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
 	if err != nil {
-		return nil, fmt.Errorf("CreateFeed failed to get presigned url: %w", err)
+		return zaperr.Wrap(err, "failed to get feed")
+	}
+
+	feed.IsPermanent = true
+
+	if _, err := svc.repository.SaveFeed(ctx, feed); err != nil {
+		return zaperr.Wrap(err, "failed to save feed")
+	}
+
+	return nil
+}
+
+func (svc *Service) MarkFeedAsEphemeral(ctx context.Context, userID string, feedID string) error {
+	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to get feed")
+	}
+
+	feed.IsPermanent = false
+
+	if _, err := svc.repository.SaveFeed(ctx, feed); err != nil {
+		return zaperr.Wrap(err, "failed to save feed")
+	}
+
+	return nil
+}
+
+func (svc *Service) ListFeedEpisodes(ctx context.Context, userID string, feedID string) ([]*Episode, error) {
+	return svc.repository.ListFeedEpisodes(ctx, userID, feedID)
+}
+
+func (svc *Service) ListEpisodeFeeds(ctx context.Context, userID string, epID string) ([]*Feed, error) {
+	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, []string{epID})
+	if err != nil {
+		return nil, err
+	}
+
+	feedIDs := make([]string, 0, len(publications))
+	for _, p := range publications {
+		if p.EpisodeID == epID {
+			feedIDs = append(feedIDs, p.FeedID)
+		}
+	}
+
+	feedsMap, err := svc.repository.GetFeedsMap(ctx, userID, feedIDs)
+	if err != nil {
+		return nil, zaperr.Wrap(err, "failed to list episode feeds")
+	}
+
+	feeds := make([]*Feed, 0, len(feedsMap))
+	for _, fid := range feedIDs {
+		feeds = append(feeds, feedsMap[fid])
+	}
+
+	return feeds, nil
+}
+
+func (svc *Service) GetPublishedFeedsMap(ctx context.Context, userID string, epIDs []string) (map[string][]string, error) {
+	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	epToFeedMap := make(map[string][]string, len(publications))
+	for _, p := range publications {
+		epToFeedMap[p.EpisodeID] = append(epToFeedMap[p.EpisodeID], p.FeedID)
+	}
+
+	return epToFeedMap, nil
+}
+
+func (svc *Service) ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error) {
+	return svc.repository.ListExpiredEpisodes(ctx, maxAge)
+}
+
+func (svc *Service) RegenerateFeed(ctx context.Context, userID string, feedID string) error {
+	if err := svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
+		UserID:  userID,
+		FeedIDs: []string{feedID},
+	}); err != nil {
+		return zaperr.Wrap(err, "failed to publish regenerate feed job", zap.String("feed_id", feedID), zap.String("user_id", userID))
+	}
+
+	return nil
+}
+
+func (svc *Service) createFeed(ctx context.Context, userID string, title string, feedID string) (*Feed, error) {
+	var err error
+	if feedID == "" {
+		for feedID == "" || feedID == DefaultFeedID {
+			feedID, err = svc.repository.NextFeedID(ctx, userID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get next feed id: %w", err)
+			}
+		}
+	}
+
+	feedKey := svc.constructS3FeedKey(userID, feedID)
+
+	url, err := svc.s3Store.URL(feedKey)
+	if err != nil {
+		return nil, fmt.Errorf("CreateFeed failed to get s3 url: %w", err)
 	}
 
 	feed := &Feed{
-		ID:     feedID, // feedID can be empty, in which case it will be generated by the repository
+		ID:     feedID, // feedIDs can be empty, in which case it will be generated by the repository
 		Title:  title,
 		UserID: userID,
-		URL:    stripQuery(presignURL),
+		URL:    url,
 	}
 	if feed, err = svc.repository.SaveFeed(ctx, feed); err != nil {
 		return nil, fmt.Errorf("failed to save default feed: %w", err)
@@ -630,7 +750,7 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 
 	var createdEpisodes []*Episode
 	for _, variants := range payload.VariantsPerEpisode {
-		episode, err := svc.CreateEpisode(ctx, payload.URL, variants, payload.ProcessingType, payload.UserID)
+		episode, err := svc.CreateEpisode(ctx, payload.UserID, payload.URL, variants, payload.ProcessingType)
 		if err != nil {
 			return zaperr.Wrap(err, "failed to create single file episode", zapFields...)
 		}
@@ -690,7 +810,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 	svc.logger.Info("polling episode status", zapFields...)
 
-	episodesMap, err := svc.repository.GetEpisodesMap(ctx, payload.EpisodeIDs, payload.UserID)
+	episodesMap, err := svc.repository.GetEpisodesMap(ctx, payload.UserID, payload.EpisodeIDs)
 	if err != nil {
 		return zaperr.Wrap(err, "failed to get episodes", zapFields...)
 	}
@@ -757,13 +877,24 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		episodesToSave = append(episodesToSave, ep)
 	}
 
+	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, payload.UserID, payload.EpisodeIDs)
+	if err != nil {
+		return zaperr.Wrap(err, "failed to get publications", zapFields...)
+	}
+	epFeedsMap := make(map[string][]string)
+	for _, p := range publications {
+		epFeedsMap[p.EpisodeID] = append(epFeedsMap[p.EpisodeID], p.FeedID)
+	}
+
 	var episodesSaveError error
 	feedsToPublish := make(map[string]bool)
 	for _, e := range episodesToSave {
 		zapFields := append(zapFields, zap.String("episode_id", e.ID))
 		if _, err := svc.repository.SaveEpisode(ctx, e); err == nil {
-			for _, f := range e.FeedIDs {
-				feedsToPublish[f] = true
+			if _, exists := epFeedsMap[e.ID]; exists {
+				for _, f := range epFeedsMap[e.ID] {
+					feedsToPublish[f] = true
+				}
 			}
 		} else {
 			episodesSaveError = multierr.Append(episodesSaveError, zaperr.Wrap(err, "failed to save episode", zapFields...))
@@ -835,11 +966,16 @@ func (svc *Service) onRegenerateFeedQueueEvent(ctx context.Context, payloadBytes
 		zap.Strings("feed_ids", payload.FeedIDs),
 	}
 
+	if len(payload.FeedIDs) == 0 {
+		svc.logger.Debug("no feeds to regenerate", zapFields...)
+		return nil
+	}
+
 	svc.logger.Info("regenerating feeds", zapFields...)
 
-	feedsMap, err := svc.repository.GetFeedsMap(ctx, payload.FeedIDs, payload.UserID)
+	feedsMap, err := svc.repository.GetFeedsMap(ctx, payload.UserID, payload.FeedIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get feeds", zapFields...)
+		return zaperr.Wrap(err, "failed to get feeds map to regenerate feed queue", zapFields...)
 	}
 
 	for _, f := range feedsMap {
@@ -858,18 +994,13 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 		zap.String("user_id", feed.UserID),
 	}
 
-	episodes, err := svc.repository.ListFeedEpisodes(ctx, feed)
+	episodes, err := svc.repository.ListFeedEpisodes(ctx, feed.UserID, feed.ID)
 	if err != nil {
 		return zaperr.Wrap(err, "failed to list feed episodes", zapFields...)
 	}
 
-	var episodesMap = make(map[string]*Episode)
-	for _, ep := range episodes {
-		episodesMap[ep.ID] = ep
-	}
-
-	objectKey := svc.constructS3FeedPath(feed.UserID, feed.ID)
-	feedReader, err := generateFeed(feed, episodesMap)
+	objectKey := svc.constructS3FeedKey(feed.UserID, feed.ID)
+	feedReader, err := generateFeed(feed, episodes)
 	if err != nil {
 		return zaperr.Wrap(err, "failed to generate feed", zapFields...)
 	}
@@ -881,8 +1012,14 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 	return nil
 }
 
-func (svc *Service) constructS3FeedPath(userID string, feedID string) string {
-	return path.Join(svc.getUserKeyPrefix(userID), "feeds", feedID)
+func (svc *Service) constructS3FeedKey(userID string, feedID string) string {
+	// we want `feeds` to go first to make it easier to assign prefix-based policies
+	return path.Join("feeds", svc.getUserKeyPrefix(userID), feedID)
+}
+
+func (svc *Service) constructS3EpisodeKey(userID string, filename string) string {
+	// we want `episodes` to go first to make it easier to assign prefix-based policies
+	return path.Join("episodes", svc.getUserKeyPrefix(userID), filename)
 }
 
 func (svc *Service) getUserKeyPrefix(userID string) string {
@@ -914,23 +1051,6 @@ func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, erro
 		return EpisodeStatusComplete, nil
 	}
 	return "", zaperr.New("unknown job status", zap.String("status", string(status)))
-}
-
-func remove(s []string, removed ...string) []string {
-	var result []string
-	for _, v := range s {
-		if !slices.Contains(removed, v) {
-			result = append(result, v)
-		}
-	}
-	return result
-}
-
-func stripQuery(url string) string {
-	if i := strings.Index(url, "?"); i != -1 {
-		return url[:i]
-	}
-	return url
 }
 
 func retry[T any](ctx context.Context, fn func() (*T, error), durations ...time.Duration) (*T, error) {

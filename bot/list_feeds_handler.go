@@ -51,7 +51,7 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 		feeds = []*service.Feed{feed}
 	}
 
-	episodes, err := ub.service.ListEpisodes(ctx, userID)
+	episodes, err := ub.service.ListUserEpisodes(ctx, userID)
 	if err != nil {
 		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
 		return
@@ -67,7 +67,12 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 		if feedID == "" {
 			text = ub.renderFeedShort(f)
 		} else {
-			text = ub.renderFeedFull(f, episodesMap)
+			feedEpisodes, err := ub.service.ListFeedEpisodes(ctx, userID, feedID)
+			if err != nil {
+				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list feed episodes", zapFields...))
+				return
+			}
+			text = ub.renderFeedFull(f, feedEpisodes)
 		}
 		if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID:    chatID,
@@ -87,14 +92,12 @@ func (ub *UndercastBot) renderFeedShort(f *service.Feed) string {
 	)
 }
 
-func (ub *UndercastBot) renderFeedFull(f *service.Feed, episodesMap map[string]*service.Episode) string {
+func (ub *UndercastBot) renderFeedFull(f *service.Feed, episodes []*service.Episode) string {
 	var renderedEpisodesBits []string
-	for _, id := range f.EpisodeIDs {
-		ep := episodesMap[id]
-		if ep == nil {
-			continue
-		}
+	episodeIDs := make([]string, 0, len(episodes))
+	for _, ep := range episodes {
 		renderedEpisodesBits = append(renderedEpisodesBits, ub.renderEpisodeShort(ep))
+		episodeIDs = append(episodeIDs, ep.ID)
 	}
 	renderedEpisodes := strings.Join(renderedEpisodesBits, "\n")
 
@@ -103,9 +106,9 @@ func (ub *UndercastBot) renderFeedFull(f *service.Feed, episodesMap map[string]*
 		fmt.Sprintf(`<code>%s</code>`, f.URL),
 		"",
 	}
-	if len(f.EpisodeIDs) > 0 {
-		episodesTitle := fmt.Sprintf(`Episodes: %d`, len(f.EpisodeIDs))
-		if formattedIDs, err := formatIDsCompactly(f.EpisodeIDs); err == nil {
+	if len(episodeIDs) > 0 {
+		episodesTitle := fmt.Sprintf(`Episodes: %d`, len(episodeIDs))
+		if formattedIDs, err := formatIDsCompactly(episodeIDs); err == nil {
 			episodesTitle += " [edit: /ee_" + formattedIDs + "]"
 		}
 		msgBits = append(msgBits, episodesTitle)

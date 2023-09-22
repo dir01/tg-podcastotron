@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"tg-podcastotron/bot/ui/multiselect"
 	"tg-podcastotron/service"
 )
@@ -52,7 +52,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	}
 	zapFields = append(zapFields, zap.Strings("episode_ids", epIDs))
 
-	episodesMap, err := ub.service.GetEpisodesMap(ctx, epIDs, userID)
+	episodesMap, err := ub.service.GetEpisodesMap(ctx, userID, epIDs)
 	if err != nil {
 		ub.sendTextMessage(ctx, chatID, "At least one of the episodes you are trying to edit does not exist. Please try again with different IDs")
 		return
@@ -132,13 +132,12 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 				return
 			} else {
 				ub.bot.RegisterHandlerMatchFunc(
-					bot.HandlerTypeMessageText,
 					func(update *models.Update) bool {
 						return update.Message.ReplyToMessage != nil && update.Message.ReplyToMessage.ID == renamePromptMsg.ID
 					},
 					func(ctx context.Context, b *bot.Bot, update *models.Update) {
 						newTitlePattern := update.Message.Text
-						if err := ub.service.RenameEpisodes(ctx, epIDs, newTitlePattern, userID); err != nil {
+						if err := ub.service.RenameEpisodes(ctx, userID, epIDs, newTitlePattern); err != nil {
 							ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to rename episodes", zapFields...))
 							return
 						}
@@ -149,7 +148,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 						}
 
 						msgTextParts := []string{fmt.Sprintf("%d episodes were renamed", len(epIDs))}
-						newEpisodesMap, err := ub.service.GetEpisodesMap(ctx, epIDs, userID)
+						newEpisodesMap, err := ub.service.GetEpisodesMap(ctx, userID, epIDs)
 						if err == nil {
 							for _, epID := range epIDs {
 								oldEp := episodesMap[epID]
@@ -161,7 +160,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 					})
 			}
 		case cmdDelete:
-			if err := ub.service.DeleteEpisodes(ctx, epIDs, userID); err != nil {
+			if err := ub.service.DeleteEpisodes(ctx, userID, epIDs); err != nil {
 				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to delete episodes", zapFields...))
 				return
 			}
@@ -173,10 +172,15 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			deleteInitialMessage()
 		case cmdManageFeeds:
 			items := make([]*multiselect.Item, len(feeds))
+			epFeedsMap, err := ub.service.GetPublishedFeedsMap(ctx, userID, epIDs)
+			if err != nil {
+				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get published feeds", zapFields...))
+				return
+			}
 			for i, feed := range feeds {
 				selected := false
-				for _, ep := range episodesMap {
-					if slices.Contains(ep.FeedIDs, feed.ID) {
+				for _, epFeedIDs := range epFeedsMap {
+					if slices.Contains(epFeedIDs, feed.ID) {
 						selected = true
 						break
 					}
@@ -199,7 +203,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 						}
 					}
 
-					if err := ub.service.PublishEpisodes(ctx, epIDs, feedIDs, userID); err != nil {
+					if err := ub.service.PublishEpisodes(ctx, userID, epIDs, feedIDs); err != nil {
 						ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to set episodes feeds", zapFields...))
 						return
 					}

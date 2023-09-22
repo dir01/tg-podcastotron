@@ -3,14 +3,13 @@ package bot
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strings"
-	"tg-podcastotron/bot/ui/multiselect"
-
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/hori-ryota/zaperr"
 	"go.uber.org/zap"
+	"path/filepath"
+	"strings"
+	"tg-podcastotron/bot/ui/multiselect"
 	"tg-podcastotron/bot/ui/treemultiselect"
 	"tg-podcastotron/service"
 )
@@ -109,7 +108,7 @@ func (ub *UndercastBot) startTorrentFlow(ctx context.Context, metadata *service.
 					{treemultiselect.NewConfirmButton(
 						"Create Episode",
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
-							ub.createEpisodes(ctx, metadata.URL, [][]string{{paths[0]}}, service.ProcessingTypeUploadOriginal, mes.Chat.ID, userID)
+							ub.createEpisodes(ctx, userID, mes.Chat.ID, metadata.URL, [][]string{{paths[0]}}, service.ProcessingTypeUploadOriginal)
 						},
 					)},
 					{cancelBtn},
@@ -117,19 +116,19 @@ func (ub *UndercastBot) startTorrentFlow(ctx context.Context, metadata *service.
 			default:
 				return [][]treemultiselect.ActionButton{
 					{treemultiselect.NewConfirmButton(
-						fmt.Sprintf("%d Episodes", len(selectedNodes)),
+						fmt.Sprintf("Separate Episodes (%d)", len(selectedNodes)),
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
 							episodesPaths := make([][]string, len(paths))
 							for i, path := range paths {
 								episodesPaths[i] = []string{path}
 							}
-							ub.createEpisodes(ctx, metadata.URL, episodesPaths, service.ProcessingTypeUploadOriginal, mes.Chat.ID, userID)
+							ub.createEpisodes(ctx, userID, mes.Chat.ID, metadata.URL, episodesPaths, service.ProcessingTypeUploadOriginal)
 						},
 					)},
 					{treemultiselect.NewConfirmButton(
-						"1 Episode",
+						"Glue Into 1 Episode",
 						func(ctx context.Context, bot *bot.Bot, mes *models.Message, paths []string) {
-							ub.createEpisodes(ctx, metadata.URL, [][]string{paths}, service.ProcessingTypeConcatenate, mes.Chat.ID, userID)
+							ub.createEpisodes(ctx, userID, mes.Chat.ID, metadata.URL, [][]string{paths}, service.ProcessingTypeConcatenate)
 						},
 					)},
 					{cancelBtn},
@@ -166,7 +165,7 @@ func (ub *UndercastBot) startYtdlFlow(ctx context.Context, metadata *service.Met
 					break
 				}
 			}
-			ub.createEpisodes(ctx, metadata.URL, [][]string{{variant}}, service.ProcessingTypeUploadOriginal, mes.Chat.ID, userID)
+			ub.createEpisodes(ctx, userID, mes.Chat.ID, metadata.URL, [][]string{{variant}}, service.ProcessingTypeUploadOriginal)
 		},
 		multiselect.WithOnItemSelectedHandler(func(itemID string) *multiselect.StateChange {
 			for _, v := range items {
@@ -188,8 +187,8 @@ func (ub *UndercastBot) startYtdlFlow(ctx context.Context, metadata *service.Met
 	return nil
 }
 
-func (ub *UndercastBot) createEpisodes(ctx context.Context, url string, variants [][]string, processingType service.ProcessingType, chatID int64, userID string) {
-	if err := ub.service.CreateEpisodesAsync(ctx, url, variants, processingType, userID); err != nil {
+func (ub *UndercastBot) createEpisodes(ctx context.Context, userID string, chatID int64, url string, variants [][]string, processingType service.ProcessingType) {
+	if err := ub.service.CreateEpisodesAsync(ctx, userID, url, variants, processingType); err != nil {
 		ub.handleError(ctx, chatID, zaperr.Wrap(
 			err, "failed to enqueue episodes creation",
 			zap.Int64("chat_id", chatID),
@@ -210,7 +209,7 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 	}
 
 	for userID, statusToChangesMap := range userToStatusToChanges {
-		chatID, err := ub.store.GetChatID(ctx, userID) // TODO: change to bulk get
+		chatID, err := ub.repository.GetChatID(ctx, userID) // TODO: change to bulk get
 		if err != nil {
 			ub.handleError(ctx, 0, zaperr.Wrap(err, "failed to get chatID", zap.String("user_id", userID)))
 			return
@@ -247,7 +246,7 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 		epIDs = append(epIDs, statusChange.Episode.ID)
 	}
 
-	if err := ub.service.PublishEpisodes(ctx, epIDs, []string{defaultFeed.ID}, userID); err != nil {
+	if err := ub.service.PublishEpisodes(ctx, userID, epIDs, []string{defaultFeed.ID}); err != nil {
 		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zaperr.ToField(err))
 	}
 

@@ -26,7 +26,6 @@ func (ub *UndercastBot) newFeedHandler(ctx context.Context, b *bot.Bot, update *
 		return
 	} else {
 		ub.bot.RegisterHandlerMatchFunc(
-			bot.HandlerTypeMessageText,
 			func(update *models.Update) bool {
 				return update.Message.ReplyToMessage != nil && update.Message.ReplyToMessage.ID == feedNamePromptMsg.ID
 			},
