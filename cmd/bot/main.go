@@ -49,6 +49,10 @@ func main() {
 	awsBucketName := mustGetEnv("AWS_BUCKET_NAME")
 	userPathSecret := mustGetEnv("USER_PATH_SECRET") // just some random string, we'll use it to salt user id and take a hash as part of the path
 	defaultFeedTitle := os.Getenv("DEFAULT_FEED_TITLE")
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "./db/sqlite.db"
+	}
 	// endregion
 
 	// region redis
@@ -114,7 +118,7 @@ func main() {
 	// endregion
 
 	mediaryService := mediary.New(mediaryURL, logger)
-	db, err := sql.Open("sqlite3", "./db/sqlite.db")
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		logger.Fatal("error opening db", zaperr.ToField(err))
 	}
