@@ -1,4 +1,4 @@
-FROM golang:1.19-alpine as app
+FROM golang:1.21-alpine as app
 RUN apk add --no-cache make
 
 ADD go.mod go.sum ./

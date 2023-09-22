@@ -80,7 +80,7 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ef", bot.MatchTypePrefix, ub.editFeedsHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/nf", bot.MatchTypeExact, ub.newFeedHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/adduser", bot.MatchTypeExact, ub.addUserHandler)
-	ub.bot.RegisterHandlerMatchFunc(bot.HandlerTypeMessageText, func(update *models.Update) bool {
+	ub.bot.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		return update != nil && update.Message != nil && update.Message.Contact != nil
 	}, ub.addUserHandler)
 	ub.bot.Start(ctx)

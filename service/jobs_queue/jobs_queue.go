@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/hori-ryota/zaperr"
+	"github.com/redis/go-redis/v9"
 	work2 "github.com/taylorchu/work"
 	"go.uber.org/zap"
 )

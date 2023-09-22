@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"tg-podcastotron/mediary"
 	"tg-podcastotron/mediary/mediarymocks"
