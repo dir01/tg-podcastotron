@@ -3,7 +3,7 @@ help: # Show help for each of the Makefile recipes.
 .PHONY: help
 
 build:  # Build the binary in ./bin/bot
-	go build -o ./bin/bot ./cmd/bot
+	CGO_ENABLED=1 go build -o ./bin/bot ./cmd/bot
 
 run: # Run the bot
 	go run ./cmd/bot
