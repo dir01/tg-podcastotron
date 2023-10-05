@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.40
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.39.0
 	github.com/docker/go-connections v0.4.0
-	github.com/go-telegram/bot v0.7.15
+	github.com/go-telegram/bot v0.8.0
 	github.com/google/uuid v1.3.1
 	github.com/hori-ryota/zaperr v0.0.0-20210301022522-bfd0551d7f64
 	github.com/jbub/podcasts v0.2.0
