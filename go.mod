@@ -8,7 +8,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.39
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.39.0
 	github.com/docker/go-connections v0.4.0
-	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-telegram/bot v0.7.15
 	github.com/google/uuid v1.3.1
 	github.com/hori-ryota/zaperr v0.0.0-20210301022522-bfd0551d7f64
@@ -16,7 +15,7 @@ require (
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.17
-	github.com/redis/go-redis/v9 v9.2.0
+	github.com/redis/go-redis/v9 v9.2.1
 	github.com/rubenv/sql-migrate v1.5.2
 	github.com/taylorchu/work v0.2.16
 	github.com/testcontainers/testcontainers-go v0.24.1
@@ -63,7 +62,6 @@ require (
 	github.com/moby/sys/sequential v0.5.0 // indirect
 	github.com/moby/term v0.5.0 // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
-	github.com/onsi/gomega v1.21.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.0-rc5 // indirect
 	github.com/opencontainers/runc v1.1.9 // indirect
