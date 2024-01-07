@@ -14,7 +14,7 @@ require (
 	github.com/jbub/podcasts v0.2.0
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/joho/godotenv v1.5.1
-	github.com/mattn/go-sqlite3 v1.14.17
+	github.com/mattn/go-sqlite3 v1.14.19
 	github.com/redis/go-redis/v9 v9.2.1
 	github.com/rubenv/sql-migrate v1.6.0
 	github.com/taylorchu/work v0.2.17
