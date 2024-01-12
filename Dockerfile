@@ -9,6 +9,7 @@ RUN go mod download
 
 ADD . .
 
+ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
 RUN make install-dev  # so that the same image could be used to run migrations
 RUN make build
 
