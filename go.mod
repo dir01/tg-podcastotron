@@ -17,7 +17,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.19
 	github.com/redis/go-redis/v9 v9.2.1
 	github.com/rubenv/sql-migrate v1.6.0
-	github.com/taylorchu/work v0.2.17
+	github.com/taylorchu/work v0.3.0
 	github.com/testcontainers/testcontainers-go v0.26.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.26.0
