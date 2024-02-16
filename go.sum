@@ -176,8 +176,8 @@ github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
 github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
 github.com/stretchr/testify v1.8.4 h1:CcVxjf3Q8PM0mHUKJCdn+eZZtm5yQwehR5yeSVQQcUk=
 github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
-github.com/taylorchu/work v0.2.17 h1:Zp3O5cYzWOVaNQtMgP5S35KqYaH0prTujM1lPeZ911M=
-github.com/taylorchu/work v0.2.17/go.mod h1:ZLKGwHCfUfsgYly1BCQkUCGPPY2yE8MoLL+90+kanvY=
+github.com/taylorchu/work v0.3.0 h1:MDOpEttpmjmj32DahzsmiJ0hyVkgzxcUd939Oxepi58=
+github.com/taylorchu/work v0.3.0/go.mod h1:ZLKGwHCfUfsgYly1BCQkUCGPPY2yE8MoLL+90+kanvY=
 github.com/testcontainers/testcontainers-go v0.26.0 h1:uqcYdoOHBy1ca7gKODfBd9uTHVK3a7UL848z09MVZ0c=
 github.com/testcontainers/testcontainers-go v0.26.0/go.mod h1:ICriE9bLX5CLxL9OFQ2N+2N+f+803LNJ1utJb1+Inx0=
 github.com/tklauser/go-sysconf v0.3.12 h1:0QaGUFOdQaIVdPgfITYzaTegZvdCjmYO52cSFAEVmqU=
