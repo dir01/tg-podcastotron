@@ -165,8 +165,8 @@ github.com/redis/go-redis/v9 v9.5.1/go.mod h1:hdY0cQFCN4fnSYT6TkisLufl/4W5UIXyv0
 github.com/rogpeppe/go-internal v1.3.0/go.mod h1:M8bDsm7K2OlrFYOpmOWEs/qY81heoFRclV5y23lUDJ4=
 github.com/rogpeppe/go-internal v1.9.0 h1:73kH8U+JUqXU8lRuOHeVHaa/SZPifC7BkcraZVejAe8=
 github.com/rogpeppe/go-internal v1.9.0/go.mod h1:WtVeX8xhTBvf0smdhujwtBcq4Qrzq/fJaraNFVN+nFs=
-github.com/rubenv/sql-migrate v1.6.0 h1:IZpcTlAx/VKXphWEpwWJ7BaMq05tYtE80zYz+8a5Il8=
-github.com/rubenv/sql-migrate v1.6.0/go.mod h1:m3ilnKP7sNb4eYkLsp6cGdPOl4OBcXM6rcbzU+Oqc5k=
+github.com/rubenv/sql-migrate v1.7.0 h1:HtQq1xyTN2ISmQDggnh0c9U3JlP8apWh8YO2jzlXpTI=
+github.com/rubenv/sql-migrate v1.7.0/go.mod h1:S4wtDEG1CKn+0ShpTtzWhFpHHI5PvCUtiGI+C+Z2THE=
 github.com/shirou/gopsutil/v3 v3.23.9 h1:ZI5bWVeu2ep4/DIxB4U9okeYJ7zp/QLTO4auRb/ty/E=
 github.com/shirou/gopsutil/v3 v3.23.9/go.mod h1:x/NWSb71eMcjFIO0vhyGW5nZ7oSIgVjrCnADckb85GA=
 github.com/shoenig/go-m1cpu v0.1.6 h1:nxdKQNcEB6vzgA2E2bvzKIYRuNj7XNJ4S/aRSwKzFtM=
