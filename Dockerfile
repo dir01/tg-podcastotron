@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine as app
+FROM golang:1.23-alpine as app
 
 RUN apk add --no-cache make gcc musl-dev
 
