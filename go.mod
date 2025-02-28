@@ -1,6 +1,6 @@
 module tg-podcastotron
 
-go 1.21
+go 1.24
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.0
