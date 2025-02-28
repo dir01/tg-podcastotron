@@ -165,13 +165,11 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 				return
 			}
 
-			replyText := fmt.Sprintf("Feed %s was deleted\n", feedID)
 			if shouldDeleteEpisodes {
-				replyText += "All feed episodes were deleted, too"
+				ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed %s was deleted. All feed episodes were deleted, too", feedID))
 			} else {
-				replyText += "All episodes are left in your library"
+				ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed %s was deleted. All episodes are left in your library", feedID))
 			}
-			ub.sendTextMessage(ctx, chatID, replyText)
 
 			deleteInitialMessage()
 

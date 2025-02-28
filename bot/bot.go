@@ -125,13 +125,13 @@ func (ub *UndercastBot) pollExpiredEpisodes(
 func (ub *UndercastBot) handleError(ctx context.Context, chatID int64, err error) {
 	id := uuid.New().String()
 	ub.logger.Error("error", zap.String("id", id), zaperr.ToField(err))
-	ub.sendTextMessage(ctx, chatID, "An error occurred while processing your request. Please try again later. \nError ID: %s", id)
+	ub.sendTextMessage(ctx, chatID, fmt.Sprintf("An error occurred while processing your request. Please try again later. \nError ID: %s", id))
 }
 
-func (ub *UndercastBot) sendTextMessage(ctx context.Context, chatID int64, message string, args ...interface{}) {
+func (ub *UndercastBot) sendTextMessage(ctx context.Context, chatID int64, message string) {
 	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: chatID,
-		Text:   fmt.Sprintf(message, args...),
+		Text:   message,
 	}); err != nil {
 		ub.logger.Error("sendTextMessage error", zaperr.ToField(err))
 	}

@@ -42,7 +42,7 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	} else {
 		if epMap, err := ub.service.GetEpisodesMap(ctx, userID, []string{epID}); err != nil {
 			if errors.Is(err, service.ErrEpisodeNotFound) {
-				ub.sendTextMessage(ctx, chatID, "Episode %s not found", epID)
+				ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Episode %s not found", epID))
 				return
 			}
 			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get episodes", zapFields...))

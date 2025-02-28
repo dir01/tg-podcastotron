@@ -64,7 +64,7 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 			return
 		}
 	default:
-		ub.sendTextMessage(ctx, chatID, "Unsupported downloader: %s", metadata.DownloaderName)
+		ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Unsupported downloader: %s", metadata.DownloaderName))
 		return
 	}
 
@@ -271,7 +271,7 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 
 func (ub *UndercastBot) notifyStatusChanged(ctx context.Context, userID string, chatID int64, changes []service.EpisodeStatusChange) {
 	for _, change := range changes {
-		ub.sendTextMessage(ctx, chatID, "Episode #%s (%s) is now %s", change.Episode.ID, change.Episode.Title, change.NewStatus)
+		ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Episode #%s (%s) is now %s", change.Episode.ID, change.Episode.Title, change.NewStatus))
 	}
 }
 

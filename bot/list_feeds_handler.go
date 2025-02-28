@@ -45,7 +45,7 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 			}
 		}
 		if feed == nil {
-			ub.sendTextMessage(ctx, chatID, "Feed %s not found", feedID)
+			ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed %s not found", feedID))
 			return
 		}
 		feeds = []*service.Feed{feed}
