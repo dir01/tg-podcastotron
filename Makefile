@@ -7,25 +7,31 @@ build:  # Build the binary in ./bin/bot
 
 run: # Run the bot
 	go run ./cmd/bot
+.PHONY: run
 
 run_all: # Run required services (from docker-compose.yml) and the bot
 	docker-compose-up
 	run
+.PHONY: run_all
 
 test:  # Run tests
 	go test -v ./...
+.PHONY: test
 
 lint:  # Run linter
-	docker run -t --rm -v $$(pwd):/app -w /app golangci/golangci-lint:v1.50.1 golangci-lint run -v
+	docker run -t --rm -v $$(pwd):/app -w /app golangci/golangci-lint:v2.0.2 golangci-lint run -v --timeout 5m
+.PHONY: lint
 
 generate:  # Generate code
 	go generate ./...
 
 docker-compose-up:  # Run required services (from docker-compose.yml)
 	docker-compose up -d
+.PHONY: docker-compose-up
 
 install-dev: # Install development dependencies
 	go install github.com/rubenv/sql-migrate/...@latest
+.PHONY: install-dev
 
 SQL_MIGRATE_CONFIG ?= ./db/dbconfig.yml
 SQL_MIGRATE_ENV ?= development

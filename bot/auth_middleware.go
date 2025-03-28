@@ -33,7 +33,7 @@ func (ub *UndercastBot) extractChatID(update *models.Update) int64 {
 	case update.Message != nil:
 		return update.Message.Chat.ID
 	case update.CallbackQuery != nil:
-		return update.CallbackQuery.Message.Chat.ID
+		return update.CallbackQuery.Message.Message.Chat.ID
 	default:
 		return 0
 	}
@@ -44,7 +44,7 @@ func (ub *UndercastBot) extractUsername(update *models.Update) string {
 	case update.Message != nil:
 		return update.Message.From.Username
 	case update.CallbackQuery != nil:
-		return update.CallbackQuery.Sender.Username
+		return update.CallbackQuery.From.Username
 	default:
 		return ""
 	}
@@ -55,7 +55,7 @@ func (ub *UndercastBot) extractUserID(update *models.Update) string {
 	case update.Message != nil:
 		return strconv.FormatInt(update.Message.From.ID, 10)
 	case update.CallbackQuery != nil:
-		return strconv.FormatInt(update.CallbackQuery.Sender.ID, 10)
+		return strconv.FormatInt(update.CallbackQuery.From.ID, 10)
 	default:
 		return ""
 	}

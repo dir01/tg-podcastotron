@@ -35,11 +35,11 @@ func (ms *MultiSelect) callback(ctx context.Context, b *bot.Bot, update *models.
 
 	switch st.cmd {
 	case cmdSelectItem:
-		ms.selectItem(ctx, b, update.CallbackQuery.Message, st.param)
+		ms.selectItem(ctx, b, update.CallbackQuery.Message.Message, st.param)
 	case cmdSelectByFilter:
-		ms.selectByFilter(ctx, b, update.CallbackQuery.Message, st.param)
+		ms.selectByFilter(ctx, b, update.CallbackQuery.Message.Message, st.param)
 	case cmdGotoPage:
-		ms.gotoPage(ctx, b, update.CallbackQuery.Message, st.param)
+		ms.gotoPage(ctx, b, update.CallbackQuery.Message.Message, st.param)
 	case cmdAction:
 		ms.onAction(ctx, b, update, st.param)
 	case cmdNop:
@@ -53,8 +53,8 @@ func (ms *MultiSelect) callback(ctx context.Context, b *bot.Bot, update *models.
 
 func (ms *MultiSelect) deleteMessage(ctx context.Context, b *bot.Bot, update *models.Update) {
 	_, errDelete := b.DeleteMessage(ctx, &bot.DeleteMessageParams{
-		ChatID:    update.CallbackQuery.Message.Chat.ID,
-		MessageID: update.CallbackQuery.Message.ID,
+		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+		MessageID: update.CallbackQuery.Message.Message.ID,
 	})
 	if errDelete != nil {
 		ms.onError(fmt.Errorf("failed to delete message: %w", errDelete))

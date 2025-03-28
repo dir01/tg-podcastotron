@@ -103,18 +103,18 @@ func (ms *MultiSelect) onAction(ctx context.Context, b *bot.Bot, update *models.
 	action := ms.actionButtons[idx]
 	switch action.Type {
 	case actionTypeCancel:
-		action.FnCancel(ctx, b, update.CallbackQuery.Message)
+		action.FnCancel(ctx, b, update.CallbackQuery.Message.Message)
 		if ms.deleteOnCancel {
 			ms.deleteMessage(ctx, b, update)
 		}
 	case actionTypeConfirm:
-		action.FnConfirm(ctx, b, update.CallbackQuery.Message, ms.items)
+		action.FnConfirm(ctx, b, update.CallbackQuery.Message.Message, ms.items)
 		if ms.deleteOnConfirmed {
 			ms.deleteMessage(ctx, b, update)
 		}
 	}
 	if action.Type == actionTypeCancel {
-		action.FnCancel(ctx, b, update.CallbackQuery.Message)
+		action.FnCancel(ctx, b, update.CallbackQuery.Message.Message)
 		if ms.deleteOnCancel {
 			ms.deleteMessage(ctx, b, update)
 		}

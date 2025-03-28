@@ -127,7 +127,7 @@ func eventually(timeout time.Duration, f func() bool) bool {
 
 func randomPrefix() (str string) {
 	b := make([]byte, 24)
-	rand.Read(b)
+	rand.Read(b) //nolint:staticcheck //crypto rand is not required for tests
 	return fmt.Sprintf("mediary:%x", b)
 
 }

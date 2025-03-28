@@ -27,7 +27,7 @@ import (
 
 func main() {
 	_ = godotenv.Load()
-	logger, err := zap.NewDevelopment()
+	logger, _ := zap.NewDevelopment()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -92,12 +92,8 @@ func main() {
 	}
 
 	if endpoint := os.Getenv("AWS_ENDPOINT"); endpoint != "" {
-		cfg.EndpointResolverWithOptions = aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...any) (aws.Endpoint, error) {
-			return aws.Endpoint{
-				URL:               endpoint,
-				HostnameImmutable: true,
-			}, nil
-		})
+		// this is utilized by  ff
+		_ = os.Setenv("AWS_ENDPOINT_URL_S3", endpoint)
 	}
 
 	s3Client := s3.NewFromConfig(cfg)

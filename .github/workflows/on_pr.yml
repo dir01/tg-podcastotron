@@ -1,10 +1,10 @@
-name: Pull Request checks
+name: PR checks
 
 on:
   pull_request:
     branches: [master]
 
 jobs:
-  test:
-    name: Run tests
-    uses: ./.github/workflows/do_run_tests.yml
+  lint-test:
+    name: Run linter and tests
+    uses: ./.github/workflows/do_lint_test.yml

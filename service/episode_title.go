@@ -96,14 +96,14 @@ func getUpdatedEpisodeTitle(episodes []*Episode, newTitlePattern string) map[str
 		newTitle := newTitlePattern
 		if hasVariablePart {
 			variablePart := strings.TrimSuffix(strings.TrimPrefix(e.Title, prefix), suffix)
-			newTitle = strings.Replace(newTitle, "%v", variablePart, -1)
+			newTitle = strings.ReplaceAll(newTitle, "%v", variablePart)
 		}
 		if hasID {
 			newID := e.ID
 			for len(newID) < maxIDLength {
 				newID = "0" + newID
 			}
-			newTitle = strings.Replace(newTitle, "%id", newID, -1)
+			newTitle = strings.ReplaceAll(newTitle, "%id", newID)
 		}
 		result[e.ID] = newTitle
 	}

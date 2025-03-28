@@ -70,12 +70,12 @@ outerLoop:
 
 	switch action.Type {
 	case actionTypeCancel:
-		action.FnCancel(ctx, b, update.CallbackQuery.Message)
+		action.FnCancel(ctx, b, update.CallbackQuery.Message.Message)
 		if tms.deleteOnCancel {
 			tms.deleteMessage(ctx, b, update)
 		}
 	case actionTypeConfirm:
-		action.FnConfirm(ctx, b, update.CallbackQuery.Message, tms.prepareResults())
+		action.FnConfirm(ctx, b, update.CallbackQuery.Message.Message, tms.prepareResults())
 		if tms.deleteOnConfirmed {
 			tms.deleteMessage(ctx, b, update)
 		}

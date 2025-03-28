@@ -99,7 +99,7 @@ func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, erro
 		return false, fmt.Errorf("failed to call mediary API: %w", err)
 	}
 
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode == http.StatusBadRequest {
 		return false, nil
@@ -129,7 +129,7 @@ func (svc *service) FetchMetadataLongPolling(ctx context.Context, mediaURL strin
 		return nil, fmt.Errorf("failed to call mediary API: %w", err)
 	}
 
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mediary returned status code %d", resp.StatusCode)
@@ -161,7 +161,7 @@ func (svc *service) CreateUploadJob(ctx context.Context, params *CreateUploadJob
 		return "", fmt.Errorf("failed to call mediary API: %w", err)
 	}
 
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusAccepted {
 		return "", fmt.Errorf("mediary returned status code %d", resp.StatusCode)

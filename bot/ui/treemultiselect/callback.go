@@ -23,13 +23,13 @@ func (tms *TreeMultiSelect) callback(ctx context.Context, b *bot.Bot, update *mo
 
 	switch st.cmd {
 	case cmdSelectNode:
-		tms.selectNode(ctx, b, update.CallbackQuery.Message, st.param)
+		tms.selectNode(ctx, b, update.CallbackQuery.Message.Message, st.param)
 	case cmdSelectByFilter:
-		tms.selectByFilter(ctx, b, update.CallbackQuery.Message, st.param)
+		tms.selectByFilter(ctx, b, update.CallbackQuery.Message.Message, st.param)
 	case cmdGotoPage:
-		tms.gotoPage(ctx, b, update.CallbackQuery.Message, st.param)
+		tms.gotoPage(ctx, b, update.CallbackQuery.Message.Message, st.param)
 	case cmdUp:
-		tms.goUp(ctx, b, update.CallbackQuery.Message, st.param)
+		tms.goUp(ctx, b, update.CallbackQuery.Message.Message, st.param)
 	case cmdAction:
 		tms.onAction(ctx, b, update, st.param)
 	case cmdNop:
@@ -95,8 +95,8 @@ func (tms *TreeMultiSelect) callbackAnswer(ctx context.Context, b *bot.Bot, call
 
 func (tms *TreeMultiSelect) deleteMessage(ctx context.Context, b *bot.Bot, update *models.Update) {
 	_, errDelete := b.DeleteMessage(ctx, &bot.DeleteMessageParams{
-		ChatID:    update.CallbackQuery.Message.Chat.ID,
-		MessageID: update.CallbackQuery.Message.ID,
+		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+		MessageID: update.CallbackQuery.Message.Message.ID,
 	})
 	if errDelete != nil {
 		tms.onError(fmt.Errorf("failed to delete message: %w", errDelete))

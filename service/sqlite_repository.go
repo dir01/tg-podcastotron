@@ -27,7 +27,7 @@ func (r *sqliteRepository) Transaction(ctx context.Context, fn func(ctx context.
 		return zaperr.Wrap(err, "failed to begin tx")
 	}
 
-	ctx = context.WithValue(ctx, "tx", tx)
+	ctx = context.WithValue(ctx, "tx", tx) //nolint:staticcheck
 	err = fn(ctx)
 	if err != nil {
 		if err := tx.Rollback(); err != nil {
@@ -89,7 +89,7 @@ func (r *sqliteRepository) NextFeedID(ctx context.Context, userID string) (feedI
 		if err := rows.Scan(&feedIDInt); err != nil {
 			return "", zaperr.Wrap(err, "failed to scan")
 		}
-		break
+		break //nolint:staticcheck //loop is unconditionally terminated intentionally
 	}
 
 	return strconv.FormatInt(feedIDInt, 10), nil

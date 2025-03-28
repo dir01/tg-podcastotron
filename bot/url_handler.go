@@ -30,7 +30,7 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 		zap.String("message_text", update.Message.Text),
 	}
 
-	if update == nil || update.Message == nil {
+	if update.Message == nil {
 		return
 	}
 	url := update.Message.Text
