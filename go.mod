@@ -16,7 +16,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/redis/go-redis/v9 v9.7.3
-	github.com/rubenv/sql-migrate v1.7.0
+	github.com/rubenv/sql-migrate v1.7.1
 	github.com/taylorchu/work v0.3.1
 	github.com/testcontainers/testcontainers-go v0.36.0
 	go.uber.org/multierr v1.11.0
