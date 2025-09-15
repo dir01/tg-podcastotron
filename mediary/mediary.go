@@ -175,6 +175,9 @@ func (svc *service) CreateUploadJob(ctx context.Context, params *CreateUploadJob
 	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
 		return "", fmt.Errorf("error decoding mediary response: %w", err)
 	}
+
+	svc.logger.Debug("got mediary response", zap.Any("response", respBody))
+
 	if respBody.Status != "accepted" {
 		return "", fmt.Errorf("mediary returned status %s", respBody.Status)
 	}
