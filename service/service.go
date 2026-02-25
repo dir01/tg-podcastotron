@@ -5,18 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hori-ryota/zaperr"
 	"go.uber.org/multierr"
-	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"tg-podcastotron/mediary"
 	jobsqueue "tg-podcastotron/service/jobs_queue"
+	"tg-podcastotron/telemetry"
 )
 
 //go:generate moq -out servicemocks/s3.go -pkg servicemocks -rm . S3Store:MockS3Store
@@ -51,12 +51,13 @@ type Repository interface {
 }
 
 type Service struct {
-	logger       *zap.Logger
+	logger       *slog.Logger
 	s3Store      S3Store
 	mediaSvc     mediary.Service
 	repository   Repository
 	jobsQueue    *jobsqueue.RJQ
 	obfuscateIDs func(string) string
+	metrics      *telemetry.Metrics
 
 	episodeStatusChangesChan chan []EpisodeStatusChange
 	defaultFeedTitle         string
@@ -132,7 +133,8 @@ func New(
 	jobsQueue *jobsqueue.RJQ,
 	defaultFeedTitle string,
 	obfuscateIDs func(string) string,
-	logger *zap.Logger,
+	logger *slog.Logger,
+	metrics *telemetry.Metrics,
 ) *Service {
 	if defaultFeedTitle == "" {
 		defaultFeedTitle = "Podcast-O-Tron"
@@ -146,6 +148,7 @@ func New(
 		episodeStatusChangesChan: make(chan []EpisodeStatusChange, 1),
 		obfuscateIDs:             obfuscateIDs,
 		defaultFeedTitle:         defaultFeedTitle,
+		metrics:                  metrics,
 	}
 }
 
@@ -182,14 +185,14 @@ func (svc *Service) CreateEpisodesAsync(
 	variantsPerEpisode [][]string,
 	processingType ProcessingType,
 ) error {
-	zapFields := []zap.Field{
-		zap.String("url", url),
-		zap.Any("variants_per_episode", variantsPerEpisode),
-		zap.String("processing_type", string(processingType)),
-		zap.String("user_id", userID),
+	fields := []any{
+		slog.String("url", url),
+		slog.Any("variants_per_episode", variantsPerEpisode),
+		slog.String("processing_type", string(processingType)),
+		slog.String("user_id", userID),
 	}
 
-	svc.logger.Info("queueing episodes creation", zapFields...)
+	svc.logger.InfoContext(ctx, "queueing episodes creation", fields...)
 
 	if err := svc.jobsQueue.Publish(ctx, queueEventCreateEpisodes, &CreateEpisodesQueuePayload{
 		URL:                url,
@@ -197,7 +200,7 @@ func (svc *Service) CreateEpisodesAsync(
 		ProcessingType:     processingType,
 		UserID:             userID,
 	}); err != nil {
-		return zaperr.Wrap(err, "failed to enqueue episodes creation", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to enqueue episodes creation", fields...)
 	}
 
 	return nil
@@ -207,18 +210,18 @@ func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL s
 	filename := uuid.New().String() + ".mp3" // TODO: implement more elaborate filename generation
 	episodeKey := svc.constructS3EpisodeKey(userID, filename)
 
-	zapFields := []zap.Field{
-		zap.String("media_url", mediaURL),
-		zap.Strings("variants", variants),
-		zap.String("processing_type", string(processingType)),
-		zap.String("filename", filename),
-		zap.String("user_id", userID),
-		zap.String("episode_key", episodeKey),
+	fields := []any{
+		slog.String("media_url", mediaURL),
+		slog.Any("variants", variants),
+		slog.String("processing_type", string(processingType)),
+		slog.String("filename", filename),
+		slog.String("user_id", userID),
+		slog.String("episode_key", episodeKey),
 	}
 
 	presignURL, err := svc.s3Store.PreSignedURL(episodeKey)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get presigned url", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to get presigned url", fields...)
 	}
 
 	var mediaryParams *mediary.CreateUploadJobParams
@@ -242,17 +245,17 @@ func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL s
 			},
 		}
 	default:
-		return nil, zaperr.Wrap(ErrNotImplemented, "unsupported processing type", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, ErrNotImplemented, "unsupported processing type", fields...)
 	}
 
 	metadata, err := svc.FetchMetadata(ctx, mediaURL)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to fetch metadata", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to fetch metadata", fields...)
 	}
 
 	mediaryID, err := svc.mediaSvc.CreateUploadJob(ctx, mediaryParams)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to create mediary job", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to create mediary job", fields...)
 	}
 
 	var episodeTitle string
@@ -267,12 +270,12 @@ func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL s
 	case "ytdl":
 		episodeTitle = metadata.Name
 	default:
-		return nil, zaperr.Wrap(ErrNotImplemented, "unsupported downloader while generating episode title", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, ErrNotImplemented, "unsupported downloader while generating episode title", fields...)
 	}
 
 	epID, err := svc.repository.NextEpisodeID(ctx, userID)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get next episode id", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to get next episode id", fields...)
 	}
 
 	ep := &Episode{
@@ -293,7 +296,7 @@ func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL s
 
 	ep, err = svc.repository.SaveEpisode(ctx, ep)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to save episode", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to save episode", fields...)
 	}
 
 	return ep, nil
@@ -303,7 +306,7 @@ func (svc *Service) IsValidURL(ctx context.Context, mediaURL string) (bool, erro
 	if isValid, err := svc.mediaSvc.IsValidURL(ctx, mediaURL); err == nil {
 		return isValid, err
 	} else {
-		return false, zaperr.Wrap(err, "failed to check if url is valid", zap.String("url", mediaURL))
+		return false, telemetry.LogError(svc.logger, ctx, err, "failed to check if url is valid", slog.String("url", mediaURL))
 	}
 }
 
@@ -311,7 +314,7 @@ func (svc *Service) ListUserEpisodes(ctx context.Context, userID string) ([]*Epi
 	if episodes, err := svc.repository.ListUserEpisodes(ctx, userID); err == nil {
 		return episodes, nil
 	} else {
-		return nil, zaperr.Wrap(err, "failed to list user episodes", zap.String("user_id", userID))
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to list user episodes", slog.String("user_id", userID))
 	}
 }
 
@@ -319,18 +322,18 @@ func (svc *Service) GetEpisodesMap(ctx context.Context, userID string, ids []str
 	if episodes, err := svc.repository.GetEpisodesMap(ctx, userID, ids); err == nil {
 		return episodes, nil
 	} else {
-		return nil, zaperr.Wrap(ErrEpisodeNotFound, "failed to get episodes map", zap.Strings("ids", ids), zaperr.ToField(err))
+		return nil, telemetry.LogError(svc.logger, ctx, ErrEpisodeNotFound, "failed to get episodes map", slog.Any("ids", ids), slog.Any("error", err))
 	}
 }
 
 func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, error) {
-	zapFields := []zap.Field{
-		zap.String("username", userID),
+	fields := []any{
+		slog.String("username", userID),
 	}
 
 	feeds, err := svc.repository.ListUserFeeds(ctx, userID)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to list user feeds", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to list user feeds", fields...)
 	}
 
 	for _, f := range feeds {
@@ -342,7 +345,7 @@ func (svc *Service) ListFeeds(ctx context.Context, userID string) ([]*Feed, erro
 	// create default feed if it doesn't exist
 	defaultFeed, err := svc.DefaultFeed(ctx, userID)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get default feed", zapFields...)
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to get default feed", fields...)
 	}
 
 	feeds = append([]*Feed{defaultFeed}, feeds...)
@@ -372,10 +375,10 @@ func (svc *Service) CreateFeed(ctx context.Context, userID string, title string)
 }
 
 func (svc *Service) PublishEpisodes(ctx context.Context, userID string, episodeIDs []string, feedIDs []string) error {
-	zapFields := []zap.Field{
-		zap.Strings("episode_ids", episodeIDs),
-		zap.Strings("feed_ids", feedIDs),
-		zap.String("user_id", userID),
+	fields := []any{
+		slog.Any("episode_ids", episodeIDs),
+		slog.Any("feed_ids", feedIDs),
+		slog.String("user_id", userID),
 	}
 
 	changedFeedIDs := make([]string, 0, 10)
@@ -383,7 +386,7 @@ func (svc *Service) PublishEpisodes(ctx context.Context, userID string, episodeI
 	if err := svc.repository.Transaction(ctx, func(ctx context.Context) error {
 		existing, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, episodeIDs)
 		if err != nil {
-			return zaperr.Wrap(err, "failed to list publicationsToCreate by episode ids")
+			return telemetry.LogError(svc.logger, ctx, err, "failed to list publicationsToCreate by episode ids")
 		}
 
 		changedFeedsMap := make(map[string]struct{}, len(feedIDs))
@@ -421,42 +424,42 @@ func (svc *Service) PublishEpisodes(ctx context.Context, userID string, episodeI
 		}
 
 		if err := svc.repository.DeletePublications(ctx, userID, publicationsToDelete); err != nil {
-			return zaperr.Wrap(err, "failed to delete existing publications")
+			return telemetry.LogError(svc.logger, ctx, err, "failed to delete existing publications")
 		}
 
 		if err := svc.repository.BulkInsertPublications(ctx, publicationsToCreate); err != nil {
-			return zaperr.Wrap(err, "failed to bulk insert publicationsToCreate")
+			return telemetry.LogError(svc.logger, ctx, err, "failed to bulk insert publicationsToCreate")
 		}
 		return nil
 	}); err != nil {
-		return zaperr.Wrap(err, "failed to publish episodes", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to publish episodes", fields...)
 	}
 
 	if err := svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
 		UserID:  userID,
 		FeedIDs: changedFeedIDs,
 	}); err != nil {
-		return zaperr.Wrap(err, "failed to publish regenerate feed job", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to publish regenerate feed job", fields...)
 	}
 
 	return nil
 }
 
 func (svc *Service) RenameEpisodes(ctx context.Context, userID string, epIDs []string, newTitlePattern string) error {
-	zapFields := []zap.Field{
-		zap.Strings("episode_ids", epIDs),
-		zap.String("new_title_pattern", newTitlePattern),
-		zap.String("user_id", userID),
+	fields := []any{
+		slog.Any("episode_ids", epIDs),
+		slog.String("new_title_pattern", newTitlePattern),
+		slog.String("user_id", userID),
 	}
 
 	episodesMap, err := svc.repository.GetEpisodesMap(ctx, userID, epIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get episodes", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to get episodes", fields...)
 	}
 
 	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to list publications", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to list publications", fields...)
 	}
 	epToFeedMap := make(map[string][]string, len(publications))
 	for _, p := range publications {
@@ -470,7 +473,7 @@ func (svc *Service) RenameEpisodes(ctx context.Context, userID string, epIDs []s
 		if newTitle != ep.Title {
 			ep.Title = newTitle
 			if _, err := svc.repository.SaveEpisode(ctx, ep); err != nil { // TODO: batch save
-				return zaperr.Wrap(err, "failed to save episode", zapFields...)
+				return telemetry.LogError(svc.logger, ctx, err, "failed to save episode", fields...)
 			}
 			if feedIDs, ok := epToFeedMap[ep.ID]; ok {
 				for _, feedID := range feedIDs {
@@ -485,7 +488,7 @@ func (svc *Service) RenameEpisodes(ctx context.Context, userID string, epIDs []s
 			UserID:  userID,
 			FeedIDs: maps.Keys(feedsToUpdate),
 		}); err != nil {
-			return zaperr.Wrap(err, "failed to publish regenerate feed job", zapFields...)
+			return telemetry.LogError(svc.logger, ctx, err, "failed to publish regenerate feed job", fields...)
 		}
 	}
 
@@ -493,9 +496,9 @@ func (svc *Service) RenameEpisodes(ctx context.Context, userID string, epIDs []s
 }
 
 func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []string) error {
-	zapFields := []zap.Field{
-		zap.Strings("episode_ids", epIDs),
-		zap.String("user_id", userID),
+	fields := []any{
+		slog.Any("episode_ids", epIDs),
+		slog.String("user_id", userID),
 	}
 
 	episodesMap, err := svc.GetEpisodesMap(ctx, userID, epIDs)
@@ -505,7 +508,7 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 
 	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to list publications", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to list publications", fields...)
 	}
 
 	publicationIDs := make([]string, 0, len(publications))
@@ -514,17 +517,17 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 	}
 
 	if err := svc.repository.DeletePublications(ctx, userID, publicationIDs); err != nil {
-		return zaperr.Wrap(err, "failed to delete publications", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to delete publications", fields...)
 	}
 
 	for _, ep := range episodesMap {
 		if err := svc.s3Store.Delete(ctx, svc.extractEpisodeS3Key(ep)); err != nil {
-			svc.logger.Error("failed to delete episode file", zaperr.ToField(err))
+			svc.logger.ErrorContext(ctx, "failed to delete episode file", slog.Any("error", err))
 		}
 	}
 
 	if err := svc.repository.DeleteEpisodes(ctx, userID, epIDs); err != nil {
-		return zaperr.Wrap(err, "failed to delete episodes", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to delete episodes", fields...)
 	}
 
 	return nil
@@ -535,48 +538,48 @@ func (svc *Service) GetFeed(ctx context.Context, userID string, feedID string) (
 }
 
 func (svc *Service) RenameFeed(ctx context.Context, userID string, feedID string, newTitle string) error {
-	zapFields := []zap.Field{
-		zap.String("feed_id", feedID),
-		zap.String("user_id", userID),
-		zap.String("new_title", newTitle),
+	fields := []any{
+		slog.String("feed_id", feedID),
+		slog.String("user_id", userID),
+		slog.String("new_title", newTitle),
 	}
 
 	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
 	if err != nil {
-		zapFields := append(zapFields, zaperr.ToField(err))
-		return zaperr.Wrap(ErrFeedNotFound, "", zapFields...)
+		fields := append(fields, slog.Any("error", err))
+		return telemetry.LogError(svc.logger, ctx, ErrFeedNotFound, "", fields...)
 	}
 
 	feed.Title = newTitle
 	if _, err := svc.repository.SaveFeed(ctx, feed); err != nil {
-		return zaperr.Wrap(err, "failed to save feed", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to save feed", fields...)
 	}
 
 	if err = svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
 		UserID:  userID,
 		FeedIDs: []string{feedID},
 	}); err != nil {
-		return zaperr.Wrap(err, "failed to publish regenerate feed job", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to publish regenerate feed job", fields...)
 	}
 
 	return nil
 }
 
 func (svc *Service) DeleteFeed(ctx context.Context, userID string, feedID string, deleteEpisodes bool) error {
-	zapFields := []zap.Field{
-		zap.String("feed_id", feedID),
-		zap.String("user_id", userID),
-		zap.Bool("delete_episodes", deleteEpisodes),
+	fields := []any{
+		slog.String("feed_id", feedID),
+		slog.String("user_id", userID),
+		slog.Bool("delete_episodes", deleteEpisodes),
 	}
 
 	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
 	if err != nil || feed == nil {
-		return zaperr.Wrap(err, "failed to find feed", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to find feed", fields...)
 	}
 
 	episodes, err := svc.repository.ListFeedEpisodes(ctx, feed.UserID, feed.ID)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to list feed episodes", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to list feed episodes", fields...)
 	}
 
 	var epIDs []string
@@ -586,7 +589,7 @@ func (svc *Service) DeleteFeed(ctx context.Context, userID string, feedID string
 
 	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to list publications", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to list publications", fields...)
 	}
 	var publicationToDeleteIDs []string
 	for _, p := range publications {
@@ -595,21 +598,21 @@ func (svc *Service) DeleteFeed(ctx context.Context, userID string, feedID string
 		}
 	}
 	if err := svc.repository.DeletePublications(ctx, userID, publicationToDeleteIDs); err != nil {
-		return zaperr.Wrap(err, "failed to delete publications", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to delete publications", fields...)
 	}
 
 	if deleteEpisodes {
 		if err := svc.DeleteEpisodes(ctx, userID, epIDs); err != nil {
-			return zaperr.Wrap(err, "failed to delete episodes", zapFields...)
+			return telemetry.LogError(svc.logger, ctx, err, "failed to delete episodes", fields...)
 		}
 	}
 
 	if err := svc.s3Store.Delete(ctx, svc.constructS3FeedKey(userID, feedID)); err != nil {
-		return zaperr.Wrap(err, "failed to delete feed from s3", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to delete feed from s3", fields...)
 	}
 
 	if err := svc.repository.DeleteFeed(ctx, userID, feedID); err != nil {
-		return zaperr.Wrap(err, "failed to delete feed", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to delete feed", fields...)
 	}
 
 	return nil
@@ -618,13 +621,13 @@ func (svc *Service) DeleteFeed(ctx context.Context, userID string, feedID string
 func (svc *Service) MarkFeedAsPermanent(ctx context.Context, userID string, feedID string) error {
 	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get feed")
+		return telemetry.LogError(svc.logger, ctx, err, "failed to get feed")
 	}
 
 	feed.IsPermanent = true
 
 	if _, err := svc.repository.SaveFeed(ctx, feed); err != nil {
-		return zaperr.Wrap(err, "failed to save feed")
+		return telemetry.LogError(svc.logger, ctx, err, "failed to save feed")
 	}
 
 	return nil
@@ -633,13 +636,13 @@ func (svc *Service) MarkFeedAsPermanent(ctx context.Context, userID string, feed
 func (svc *Service) MarkFeedAsEphemeral(ctx context.Context, userID string, feedID string) error {
 	feed, err := svc.repository.GetFeed(ctx, userID, feedID)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get feed")
+		return telemetry.LogError(svc.logger, ctx, err, "failed to get feed")
 	}
 
 	feed.IsPermanent = false
 
 	if _, err := svc.repository.SaveFeed(ctx, feed); err != nil {
-		return zaperr.Wrap(err, "failed to save feed")
+		return telemetry.LogError(svc.logger, ctx, err, "failed to save feed")
 	}
 
 	return nil
@@ -664,7 +667,7 @@ func (svc *Service) ListEpisodeFeeds(ctx context.Context, userID string, epID st
 
 	feedsMap, err := svc.repository.GetFeedsMap(ctx, userID, feedIDs)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to list episode feeds")
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to list episode feeds")
 	}
 
 	feeds := make([]*Feed, 0, len(feedsMap))
@@ -698,7 +701,7 @@ func (svc *Service) RegenerateFeed(ctx context.Context, userID string, feedID st
 		UserID:  userID,
 		FeedIDs: []string{feedID},
 	}); err != nil {
-		return zaperr.Wrap(err, "failed to publish regenerate feed job", zap.String("feed_id", feedID), zap.String("user_id", userID))
+		return telemetry.LogError(svc.logger, ctx, err, "failed to publish regenerate feed job", slog.String("feed_id", feedID), slog.String("user_id", userID))
 	}
 
 	return nil
@@ -737,22 +740,22 @@ func (svc *Service) createFeed(ctx context.Context, userID string, title string,
 func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes []byte) error {
 	var payload CreateEpisodesQueuePayload
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return zaperr.Wrap(err, "failed to unmarshal payload", zap.String("payload", string(payloadBytes)))
+		return telemetry.LogError(svc.logger, ctx, err, "failed to unmarshal payload", slog.String("payload", string(payloadBytes)))
 	}
 
-	zapFields := []zap.Field{
-		zap.String("url", payload.URL),
-		zap.Any("variants_per_episode", payload.VariantsPerEpisode),
-		zap.String("processing_type", string(payload.ProcessingType)),
+	fields := []any{
+		slog.String("url", payload.URL),
+		slog.Any("variants_per_episode", payload.VariantsPerEpisode),
+		slog.String("processing_type", string(payload.ProcessingType)),
 	}
 
-	svc.logger.Info("creating queued episodes", zapFields...)
+	svc.logger.InfoContext(ctx, "creating queued episodes", fields...)
 
 	var createdEpisodes []*Episode
 	for _, variants := range payload.VariantsPerEpisode {
 		episode, err := svc.CreateEpisode(ctx, payload.UserID, payload.URL, variants, payload.ProcessingType)
 		if err != nil {
-			return zaperr.Wrap(err, "failed to create single file episode", zapFields...)
+			return telemetry.LogError(svc.logger, ctx, err, "failed to create single file episode", fields...)
 		}
 		createdEpisodes = append(createdEpisodes, episode)
 	}
@@ -766,8 +769,8 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 		EpisodeIDs: episodeIDs,
 		UserID:     payload.UserID,
 	}); err != nil {
-		zapFields := append(zapFields, zap.Strings("episode_ids", episodeIDs), zaperr.ToField(err))
-		svc.logger.Error("failed to enqueue episode status polling", zapFields...)
+		fields := append(fields, slog.Any("episode_ids", episodeIDs), slog.Any("error", err))
+		svc.logger.ErrorContext(ctx, "failed to enqueue episode status polling", fields...)
 	}
 
 	episodesStatusChanges := make([]EpisodeStatusChange, len(createdEpisodes))
@@ -786,20 +789,20 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes []byte) error {
 	var payload PollEpisodesStatusQueuePayload
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return zaperr.Wrap(err, "failed to unmarshal payload", zap.String("payload", string(payloadBytes)))
+		return telemetry.LogError(svc.logger, ctx, err, "failed to unmarshal payload", slog.String("payload", string(payloadBytes)))
 	}
 
-	zapFields := []zap.Field{
-		zap.Strings("episode_ids", payload.EpisodeIDs),
-		zap.String("user_id", payload.UserID),
-		zap.Timep("poll_after", payload.PollAfter),
+	fields := []any{
+		slog.Any("episode_ids", payload.EpisodeIDs),
+		slog.String("user_id", payload.UserID),
+		slog.Any("poll_after", payload.PollAfter),
 	}
 
 	if payload.PollAfter != nil {
 		sleepDuration := time.Until(*payload.PollAfter)
 		if sleepDuration > 0 {
-			zapFields := append(zapFields, zap.Duration("sleep_duration", sleepDuration))
-			svc.logger.Debug("sleeping before polling episodes", zapFields...)
+			fields := append(fields, slog.Duration("sleep_duration", sleepDuration))
+			svc.logger.DebugContext(ctx, "sleeping before polling episodes", fields...)
 			select {
 			case <-time.After(sleepDuration):
 			case <-ctx.Done():
@@ -808,11 +811,11 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		}
 	}
 
-	svc.logger.Info("polling episode status", zapFields...)
+	svc.logger.InfoContext(ctx, "polling episode status", fields...)
 
 	episodesMap, err := svc.repository.GetEpisodesMap(ctx, payload.UserID, payload.EpisodeIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get episodes", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to get episodes", fields...)
 	}
 
 	mediaryIDs := make([]string, 0, len(episodesMap))
@@ -828,30 +831,30 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 	jobStatusMap, err := svc.mediaSvc.FetchJobStatusMap(ctx, mediaryIDs)
 	if err != nil {
-		zapFields := append(zapFields, zap.Strings("mediary_ids", mediaryIDs))
-		return zaperr.Wrap(err, "failed to fetch job status", zapFields...)
+		fields := append(fields, slog.Any("mediary_ids", mediaryIDs))
+		return telemetry.LogError(svc.logger, ctx, err, "failed to fetch job status", fields...)
 	}
 
 	episodesStateChanges := make([]EpisodeStatusChange, 0, len(episodesMap))
 	episodesToSave := make([]*Episode, 0, len(episodesMap))
 	episodeIDsToRequeue := make([]string, 0, len(episodesMap))
 	for _, ep := range episodesMap {
-		zapFields := append(zapFields, zap.String("episode_id", ep.ID), zap.String("mediary_id", ep.MediaryID))
+		fields := append(fields, slog.String("episode_id", ep.ID), slog.String("mediary_id", ep.MediaryID))
 		jstat, exists := jobStatusMap[ep.MediaryID]
 		if !exists {
 			if payload.RequeueCount < maxPollEpisodesRequeueCount {
-				svc.logger.Warn("mediary job status not found", zapFields...)
+				svc.logger.WarnContext(ctx, "mediary job status not found", fields...)
 				episodeIDsToRequeue = append(episodeIDsToRequeue, ep.ID)
 			} else {
-				svc.logger.Warn("mediary job status not found, max requeue count reached", zapFields...)
+				svc.logger.WarnContext(ctx, "mediary job status not found, max requeue count reached", fields...)
 			}
 			continue
 		}
 
 		newStatus, err := jobStatusToEpisodeStatus(jstat.Status)
 		if err != nil {
-			zapFields := append(zapFields, zap.String("job_status", string(jstat.Status)))
-			return zaperr.Wrap(err, "failed to convert job status to episode status", zapFields...)
+			fields := append(fields, slog.String("job_status", string(jstat.Status)))
+			return telemetry.LogError(svc.logger, ctx, err, "failed to convert job status to episode status", fields...)
 		}
 
 		if newStatus != EpisodeStatusComplete {
@@ -879,7 +882,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, payload.UserID, payload.EpisodeIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get publications", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to get publications", fields...)
 	}
 	epFeedsMap := make(map[string][]string)
 	for _, p := range publications {
@@ -889,7 +892,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	var episodesSaveError error
 	feedsToPublish := make(map[string]bool)
 	for _, e := range episodesToSave {
-		zapFields := append(zapFields, zap.String("episode_id", e.ID))
+		fields := append(fields, slog.String("episode_id", e.ID))
 		if _, err := svc.repository.SaveEpisode(ctx, e); err == nil {
 			if _, exists := epFeedsMap[e.ID]; exists {
 				for _, f := range epFeedsMap[e.ID] {
@@ -897,7 +900,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 				}
 			}
 		} else {
-			episodesSaveError = multierr.Append(episodesSaveError, zaperr.Wrap(err, "failed to save episode", zapFields...))
+			episodesSaveError = multierr.Append(episodesSaveError, telemetry.LogError(svc.logger, ctx, err, "failed to save episode", fields...))
 		}
 	}
 
@@ -911,8 +914,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			UserID:  payload.UserID,
 		}); err != nil {
 			// TODO: failure here will leave data in inconsistent state: episodes will be saved but feeds will not be regenerated
-			zapFields := append(zapFields, zap.Strings("feed_ids", feedIDs))
-			return zaperr.Wrap(err, "failed to enqueue feed regeneration", zapFields...)
+			fields := append(fields, slog.Any("feed_ids", feedIDs))
+			return telemetry.LogError(svc.logger, ctx, err, "failed to enqueue feed regeneration", fields...)
 		}
 	}
 
@@ -948,8 +951,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		newPayload.PollAfter = &pollAfter
 
 		if err := svc.jobsQueue.Publish(ctx, queueEventPollEpisodesStatus, newPayload); err != nil {
-			zapFields := append(zapFields, zap.Strings("episode_ids", episodeIDsToRequeue))
-			return zaperr.Wrap(err, "failed to enqueue episode status polling", zapFields...)
+			fields := append(fields, slog.Any("episode_ids", episodeIDsToRequeue))
+			return telemetry.LogError(svc.logger, ctx, err, "failed to enqueue episode status polling", fields...)
 		}
 	}
 
@@ -959,29 +962,29 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 func (svc *Service) onRegenerateFeedQueueEvent(ctx context.Context, payloadBytes []byte) error {
 	var payload RegenerateFeedQueuePayload
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-		return zaperr.Wrap(err, "failed to unmarshal payload", zap.String("payload", string(payloadBytes)))
+		return telemetry.LogError(svc.logger, ctx, err, "failed to unmarshal payload", slog.String("payload", string(payloadBytes)))
 	}
 
-	zapFields := []zap.Field{
-		zap.Strings("feed_ids", payload.FeedIDs),
+	fields := []any{
+		slog.Any("feed_ids", payload.FeedIDs),
 	}
 
 	if len(payload.FeedIDs) == 0 {
-		svc.logger.Debug("no feeds to regenerate", zapFields...)
+		svc.logger.DebugContext(ctx, "no feeds to regenerate", fields...)
 		return nil
 	}
 
-	svc.logger.Info("regenerating feeds", zapFields...)
+	svc.logger.InfoContext(ctx, "regenerating feeds", fields...)
 
 	feedsMap, err := svc.repository.GetFeedsMap(ctx, payload.UserID, payload.FeedIDs)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to get feeds map to regenerate feed queue", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to get feeds map to regenerate feed queue", fields...)
 	}
 
 	for _, f := range feedsMap {
 		if err := svc.regenerateFeedFile(ctx, f); err != nil {
-			zapFields := append(zapFields, zap.String("feed_id", f.ID))
-			return zaperr.Wrap(err, "failed to regenerate feed", zapFields...)
+			fields := append(fields, slog.String("feed_id", f.ID))
+			return telemetry.LogError(svc.logger, ctx, err, "failed to regenerate feed", fields...)
 		}
 	}
 
@@ -989,24 +992,24 @@ func (svc *Service) onRegenerateFeedQueueEvent(ctx context.Context, payloadBytes
 }
 
 func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
-	zapFields := []zap.Field{
-		zap.String("feed_id", feed.ID),
-		zap.String("user_id", feed.UserID),
+	fields := []any{
+		slog.String("feed_id", feed.ID),
+		slog.String("user_id", feed.UserID),
 	}
 
 	episodes, err := svc.repository.ListFeedEpisodes(ctx, feed.UserID, feed.ID)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to list feed episodes", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to list feed episodes", fields...)
 	}
 
 	objectKey := svc.constructS3FeedKey(feed.UserID, feed.ID)
 	feedReader, err := generateFeed(feed, episodes)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to generate feed", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to generate feed", fields...)
 	}
 
 	if err := svc.s3Store.Put(ctx, objectKey, feedReader, WithContentType("text/xml; charset=utf-8")); err != nil {
-		return zaperr.Wrap(err, "failed to upload feed", zapFields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to upload feed", fields...)
 	}
 
 	return nil
@@ -1050,7 +1053,7 @@ func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, erro
 	case mediary.JobStatusComplete:
 		return EpisodeStatusComplete, nil
 	}
-	return "", zaperr.New("unknown job status", zap.String("status", string(status)))
+	return "", fmt.Errorf("unknown job status: %s", string(status))
 }
 
 func retry[T any](ctx context.Context, fn func() (*T, error), durations ...time.Duration) (*T, error) {

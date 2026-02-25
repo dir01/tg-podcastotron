@@ -3,7 +3,8 @@ package bot
 import (
 	"context"
 	"database/sql"
-	"github.com/hori-ryota/zaperr"
+	"fmt"
+
 	"github.com/jmoiron/sqlx"
 )
 
@@ -17,12 +18,12 @@ type sqliteRepository struct {
 
 func (s *sqliteRepository) SetChatID(ctx context.Context, userID string, chatID int64) error {
 	result := s.db.MustExecContext(ctx, `
-		INSERT INTO chats (user_id, chat_id) VALUES (?, ?) 
+		INSERT INTO chats (user_id, chat_id) VALUES (?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET chat_id = ?
 		`, userID, chatID, chatID,
 	)
 	if _, err := result.RowsAffected(); err != nil {
-		return zaperr.Wrap(err, "failed to insert chat")
+		return fmt.Errorf("failed to insert chat: %w", err)
 	}
 	return nil
 }
@@ -33,7 +34,7 @@ func (s *sqliteRepository) GetChatID(ctx context.Context, userID string) (int64,
 		if err == sql.ErrNoRows {
 			return -1, nil
 		}
-		return -1, zaperr.Wrap(err, "failed to select chat")
+		return -1, fmt.Errorf("failed to select chat: %w", err)
 	}
 	return chatID, nil
 }

@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"log/slog"
+	"os"
+
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 	tests "tg-podcastotron/testutils"
 )
 
-var logger, _ = zap.NewDevelopment()
+var logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 func TestRedisJobsQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)

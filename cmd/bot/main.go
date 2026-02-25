@@ -3,39 +3,64 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
-	"github.com/hori-ryota/zaperr"
-	_ "github.com/mattn/go-sqlite3"
+	"log/slog"
 	"os"
 	"os/signal"
 
+	"github.com/XSAM/otelsql"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
+	_ "github.com/mattn/go-sqlite3"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"tg-podcastotron/auth"
 	"tg-podcastotron/bot"
 	"tg-podcastotron/mediary"
 	"tg-podcastotron/service"
 	jobsqueue "tg-podcastotron/service/jobs_queue"
+	"tg-podcastotron/telemetry"
 )
 
 func main() {
 	_ = godotenv.Load()
-	logger, _ := zap.NewDevelopment()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
+
+	// region telemetry
+	telemetryInstance, err := telemetry.Initialize(ctx, telemetry.Config{
+		ServiceName:    "tg-podcastotron",
+		ServiceVersion: "1.0.0",
+		Environment:    os.Getenv("ENVIRONMENT"),
+		OTLPEndpoint:   os.Getenv("OTEL_ENDPOINT"),
+		EnableStdout:   os.Getenv("ENVIRONMENT") != "production",
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "error initializing telemetry", slog.Any("error", err))
+		os.Exit(1)
+	}
+	defer telemetryInstance.Shutdown(ctx) //nolint:errcheck
+	logger := telemetryInstance.Logger
+
+	metrics, err := telemetry.NewMetrics()
+	if err != nil {
+		logger.ErrorContext(ctx, "error creating metrics", slog.Any("error", err))
+		os.Exit(1)
+	}
+	// endregion
 
 	// region env vars
 	mustGetEnv := func(key string) string {
 		value, ok := os.LookupEnv(key)
 		if !ok {
-			logger.Fatal("missing env var", zap.String("key", key))
+			logger.ErrorContext(ctx, "missing env var", slog.String("key", key))
+			os.Exit(1)
 		}
 		return value
 	}
@@ -59,16 +84,25 @@ func main() {
 	mkRedisClient := func(url string) (client *redis.Client, teardown func()) {
 		opt, err := redis.ParseURL(url)
 		if err != nil {
-			logger.Fatal("error parsing redis url", zaperr.ToField(err))
+			logger.ErrorContext(ctx, "error parsing redis url", slog.Any("error", err))
+			os.Exit(1)
 		}
 		redisClient := redis.NewClient(opt)
+		if err := redisotel.InstrumentTracing(redisClient); err != nil {
+			logger.ErrorContext(ctx, "error instrumenting redis tracing", slog.Any("error", err))
+			os.Exit(1)
+		}
+		if err := redisotel.InstrumentMetrics(redisClient); err != nil {
+			logger.ErrorContext(ctx, "error instrumenting redis metrics", slog.Any("error", err))
+			os.Exit(1)
+		}
 		if _, err := redisClient.Ping(ctx).Result(); err != nil {
-			logger.Fatal("error connecting to redis", zaperr.ToField(err))
+			logger.ErrorContext(ctx, "error connecting to redis", slog.Any("error", err))
+			os.Exit(1)
 		}
 		return redisClient, func() {
-			err := redisClient.Close()
-			if err != nil {
-				logger.Error("error closing redis client", zaperr.ToField(err))
+			if err := redisClient.Close(); err != nil {
+				logger.ErrorContext(ctx, "error closing redis client", slog.Any("error", err))
 			}
 		}
 	}
@@ -88,11 +122,14 @@ func main() {
 		}),
 	)
 	if err != nil {
-		logger.Fatal("error creating s3 config", zaperr.ToField(err))
+		logger.ErrorContext(ctx, "error creating s3 config", slog.Any("error", err))
+		os.Exit(1)
 	}
 
+	otelaws.AppendMiddlewares(&cfg.APIOptions)
+
 	if endpoint := os.Getenv("AWS_ENDPOINT"); endpoint != "" {
-		// this is utilized by  ff
+		// this is utilized by localstack
 		_ = os.Setenv("AWS_ENDPOINT_URL_S3", endpoint)
 	}
 
@@ -103,34 +140,42 @@ func main() {
 			LocationConstraint: types.BucketLocationConstraint(awsRegion),
 		},
 	})
-	logger.Debug("created bucket", zap.String("bucket", awsBucketName), zaperr.ToField(err))
+	logger.DebugContext(ctx, "created bucket", slog.String("bucket", awsBucketName), slog.Any("error", err))
 	// endregion
 
 	// region jobs queue
 	jobsQueue, err := jobsqueue.NewRedisJobsQueue(bgJobsRedisClient, 2, "undercast:jobs", logger)
 	if err != nil {
-		logger.Fatal("error creating jobs queue", zaperr.ToField(err))
+		logger.ErrorContext(ctx, "error creating jobs queue", slog.Any("error", err))
+		os.Exit(1)
 	}
 	// endregion
 
 	mediaryService := mediary.New(mediaryURL, logger)
-	db, err := sql.Open("sqlite3", dbPath)
+
+	db, err := otelsql.Open("sqlite3", dbPath,
+		otelsql.WithAttributes(semconv.DBSystemSqlite),
+	)
 	if err != nil {
-		logger.Fatal("error opening db", zaperr.ToField(err))
+		logger.ErrorContext(ctx, "error opening db", slog.Any("error", err))
+		os.Exit(1)
 	}
+	otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemSqlite)) //nolint:errcheck
+
 	svcRepo := service.NewSqliteRepository(db)
 	s3Store := service.NewS3Store(s3Client, awsBucketName)
 	obfuscateIDs := func(id string) string {
 		hash := sha256.Sum256([]byte(userPathSecret + id))
 		return hex.EncodeToString(hash[:])
 	}
-	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, defaultFeedTitle, obfuscateIDs, logger)
+	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, defaultFeedTitle, obfuscateIDs, logger, metrics)
 
 	botStore := bot.NewSqliteRepository(db)
 	authRepo := auth.NewSqliteRepository(db)
 	botAuthService := auth.New(adminUsername, authRepo, logger)
 	ubot := bot.NewUndercastBot(botToken, botAuthService, botStore, svc, logger)
 	if err := ubot.Start(ctx); err != nil {
-		logger.Fatal("error starting bot", zaperr.ToField(err))
+		logger.ErrorContext(ctx, "error starting bot", slog.Any("error", err))
+		os.Exit(1)
 	}
 }

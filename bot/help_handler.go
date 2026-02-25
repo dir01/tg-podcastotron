@@ -2,7 +2,7 @@ package bot
 
 import (
 	"context"
-	"github.com/hori-ryota/zaperr"
+	"log/slog"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -15,7 +15,7 @@ This bot allows you to create podcasts from torrent magnet links.
 Subscribe to it and listen away!
 
 Bot will try to figure episode title to the best of its ability,
-but you can always edit episodes later: change title 
+but you can always edit episodes later: change title
 or which podcast feeds they are published to, like so:
 
 /ee_1- edit episode 1
@@ -42,7 +42,7 @@ func (ub *UndercastBot) helpHandler(ctx context.Context, _ *bot.Bot, update *mod
 		Text:      helpMessage,
 		ParseMode: models.ParseModeHTML,
 	}); err != nil {
-		ub.logger.Error("sendTextMessage error", zaperr.ToField(err))
+		ub.logger.ErrorContext(ctx, "sendTextMessage error", slog.Any("error", err))
 	}
 
 }

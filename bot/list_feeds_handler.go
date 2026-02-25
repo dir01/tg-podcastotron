@@ -8,8 +8,6 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"github.com/hori-ryota/zaperr"
-	"go.uber.org/zap"
 	"tg-podcastotron/service"
 )
 
@@ -22,17 +20,9 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 
 	feedID := ub.parseListFeedsCmd(update.Message.Text)
 
-	zapFields := []zap.Field{
-		zap.Int64("chat_id", chatID),
-		zap.String("message_text", update.Message.Text),
-		zap.String("user_id", userID),
-		zap.String("username", ub.extractUsername(update)),
-		zap.String("feed_id", feedID),
-	}
-
 	feeds, err := ub.service.ListFeeds(ctx, userID)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to list feeds: %w", err))
 		return
 	}
 
@@ -53,7 +43,7 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 
 	episodes, err := ub.service.ListUserEpisodes(ctx, userID)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list episodes", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to list episodes: %w", err))
 		return
 	}
 
@@ -69,7 +59,7 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 		} else {
 			feedEpisodes, err := ub.service.ListFeedEpisodes(ctx, userID, feedID)
 			if err != nil {
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list feed episodes", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to list feed episodes: %w", err))
 				return
 			}
 			text = ub.renderFeedFull(f, feedEpisodes)
@@ -79,7 +69,7 @@ func (ub *UndercastBot) listFeedsHandler(ctx context.Context, b *bot.Bot, update
 			Text:      text,
 			ParseMode: models.ParseModeHTML,
 		}); err != nil {
-			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
+			ub.handleError(ctx, chatID, fmt.Errorf("failed to send message: %w", err))
 		}
 	}
 

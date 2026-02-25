@@ -3,12 +3,12 @@ package bot
 import (
 	"context"
 	"fmt"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
-	"github.com/hori-ryota/zaperr"
-	"go.uber.org/zap"
+	"log/slog"
 	"path/filepath"
 	"strings"
+
+	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"tg-podcastotron/bot/ui/multiselect"
 	"tg-podcastotron/bot/ui/treemultiselect"
 	"tg-podcastotron/service"
@@ -16,19 +16,12 @@ import (
 
 func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {
 	if update == nil || update.Message == nil {
-		ub.logger.Error("urlHandler: update or update.Message is nil")
+		ub.logger.ErrorContext(ctx, "urlHandler: update or update.Message is nil")
 		return
 	}
 
 	chatID := ub.extractChatID(update)
 	userID := ub.extractUserID(update)
-
-	zapFields := []zap.Field{
-		zap.Int64("chat_id", chatID),
-		zap.String("user_id", userID),
-		zap.String("username", ub.extractUsername(update)),
-		zap.String("message_text", update.Message.Text),
-	}
 
 	if update.Message == nil {
 		return
@@ -36,7 +29,7 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 	url := update.Message.Text
 	isValid, err := ub.service.IsValidURL(ctx, url)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to check if URL is valid", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to check if URL is valid: %w", err))
 		return
 	}
 	if !isValid {
@@ -46,21 +39,19 @@ func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *mode
 
 	metadata, err := ub.service.FetchMetadata(ctx, url)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to fetch metadata", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to fetch metadata: %w", err))
 		return
 	}
-
-	zapFields = append(zapFields, zap.Any("metadata", metadata))
 
 	switch metadata.DownloaderName {
 	case "torrent":
 		if err = ub.startTorrentFlow(ctx, metadata, userID, chatID); err != nil {
-			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to start torrent flow", zapFields...))
+			ub.handleError(ctx, chatID, fmt.Errorf("failed to start torrent flow: %w", err))
 			return
 		}
 	case "ytdl":
 		if err = ub.startYtdlFlow(ctx, metadata, userID, chatID); err != nil {
-			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to start ytdl flow", zapFields...))
+			ub.handleError(ctx, chatID, fmt.Errorf("failed to start ytdl flow: %w", err))
 			return
 		}
 	default:
@@ -137,12 +128,12 @@ func (ub *UndercastBot) startTorrentFlow(ctx context.Context, metadata *service.
 		}),
 	)
 
-	if msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      chatID,
 		Text:        "Please choose which files to include in the episode",
 		ReplyMarkup: kb,
 	}); err != nil {
-		return zaperr.Wrap(err, "failed to send message", zap.Any("message", msg))
+		return fmt.Errorf("failed to send message: %w", err)
 	}
 
 	return nil
@@ -176,12 +167,12 @@ func (ub *UndercastBot) startYtdlFlow(ctx context.Context, metadata *service.Met
 		multiselect.WithItemFilters(),
 	)
 
-	if msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      chatID,
 		Text:        "Please choose variant",
 		ReplyMarkup: kb,
 	}); err != nil {
-		return zaperr.Wrap(err, "failed to send message", zap.Any("message", msg))
+		return fmt.Errorf("failed to send message: %w", err)
 	}
 
 	return nil
@@ -189,13 +180,7 @@ func (ub *UndercastBot) startYtdlFlow(ctx context.Context, metadata *service.Met
 
 func (ub *UndercastBot) createEpisodes(ctx context.Context, userID string, chatID int64, url string, variants [][]string, processingType service.ProcessingType) {
 	if err := ub.service.CreateEpisodesAsync(ctx, userID, url, variants, processingType); err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(
-			err, "failed to enqueue episodes creation",
-			zap.Int64("chat_id", chatID),
-			zap.String("user_id", userID),
-			zap.String("url", url),
-			zap.Any("variants", variants),
-		))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to enqueue episodes creation: %w", err))
 	}
 }
 
@@ -211,7 +196,7 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 	for userID, statusToChangesMap := range userToStatusToChanges {
 		chatID, err := ub.repository.GetChatID(ctx, userID) // TODO: change to bulk get
 		if err != nil {
-			ub.handleError(ctx, 0, zaperr.Wrap(err, "failed to get chatID", zap.String("user_id", userID)))
+			ub.handleError(ctx, 0, fmt.Errorf("failed to get chatID: %w", err))
 			return
 		}
 
@@ -231,14 +216,9 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 }
 
 func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string, chatID int64, changes []service.EpisodeStatusChange) {
-	zapFields := []zap.Field{
-		zap.String("user_id", userID),
-		zap.Int64("chat_id", chatID),
-	}
-
 	defaultFeed, err := ub.service.DefaultFeed(ctx, userID)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get default feed", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to get default feed: %w", err))
 	}
 
 	epIDs := make([]string, 0, len(changes))
@@ -247,12 +227,12 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 	}
 
 	if err := ub.service.PublishEpisodes(ctx, userID, epIDs, []string{defaultFeed.ID}); err != nil {
-		ub.logger.Error("handleEpisodesCreated failed to publish episodes", zaperr.ToField(err))
+		ub.logger.ErrorContext(ctx, "handleEpisodesCreated failed to publish episodes", slog.Any("error", err))
 	}
 
 	message, err := formatEpisodesCreatedMessage(epIDs, defaultFeed)
 	if err != nil {
-		ub.logger.Error("failed to format episodes created message", zaperr.ToField(err))
+		ub.logger.ErrorContext(ctx, "failed to format episodes created message", slog.Any("error", err))
 		message = "Accepted"
 	}
 	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
@@ -261,10 +241,10 @@ func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string
 		ParseMode:   models.ParseModeHTML,
 		ReplyMarkup: nil,
 	}); err != nil {
-		ub.logger.Error("failed to send message",
-			zap.String("user_id", userID),
-			zap.Int64("chat_id", chatID),
-			zaperr.ToField(err),
+		ub.logger.ErrorContext(ctx, "failed to send message",
+			slog.String("user_id", userID),
+			slog.Int64("chat_id", chatID),
+			slog.Any("error", err),
 		)
 	}
 }
@@ -295,7 +275,7 @@ To change the feed or name, send /ee_%s`,
 
 	episodeIDsStr, err := formatIDsCompactly(epIDs)
 	if err != nil {
-		return "", zaperr.Wrap(err, "failed to format episode IDs")
+		return "", fmt.Errorf("failed to format episode IDs: %w", err)
 	}
 
 	strBits := []string{

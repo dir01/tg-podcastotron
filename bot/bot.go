@@ -3,15 +3,15 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
-	"github.com/hori-ryota/zaperr"
-	"go.uber.org/zap"
 	"tg-podcastotron/auth"
 	"tg-podcastotron/service"
+	"tg-podcastotron/telemetry"
 )
 
 func NewUndercastBot(
@@ -19,7 +19,7 @@ func NewUndercastBot(
 	auth *auth.Service,
 	repository Repository,
 	service *service.Service,
-	logger *zap.Logger,
+	logger *slog.Logger,
 ) *UndercastBot {
 	return &UndercastBot{
 		logger:     logger,
@@ -36,7 +36,7 @@ type Repository interface {
 }
 
 type UndercastBot struct {
-	logger     *zap.Logger
+	logger     *slog.Logger
 	token      string
 	bot        *bot.Bot
 	auth       *auth.Service
@@ -69,7 +69,7 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 	var err error
 	ub.bot, err = bot.New(ub.token, opts...)
 	if err != nil {
-		return zaperr.Wrap(err, "error while creating go-telegram/bot")
+		return telemetry.LogError(ub.logger, ctx, err, "error while creating go-telegram/bot")
 	}
 
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, ub.helpHandler)
@@ -93,28 +93,29 @@ func (ub *UndercastBot) pollExpiredEpisodes(
 	pollingTicker *time.Ticker,
 	epExpirationAge time.Duration,
 ) {
-	ub.logger.Info("starting expired episodes poller")
+	ub.logger.InfoContext(ctx, "starting expired episodes poller")
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-pollingTicker.C:
-			ub.logger.Info("listing expired episodes")
+			ub.logger.InfoContext(ctx, "listing expired episodes")
 			expiredEps, err := ub.service.ListExpiredEpisodes(ctx, epExpirationAge)
 			if err != nil {
-				ub.logger.Error("error while listing expired episodes", zaperr.ToField(err))
+				ub.logger.ErrorContext(ctx, "error while listing expired episodes", slog.Any("error", err))
 				continue
 			}
 
 			for _, ep := range expiredEps {
 				if err := ub.service.DeleteEpisodes(ctx, ep.UserID, []string{ep.ID}); err != nil {
-					ub.logger.Error("error while deleting episode", zaperr.ToField(err))
+					ub.logger.ErrorContext(ctx, "error while deleting episode", slog.Any("error", err))
 				} else {
-					ub.logger.Info(
+					ub.logger.InfoContext(
+						ctx,
 						"deleted episode",
-						zap.String("id", ep.ID),
-						zap.String("title", ep.Title),
-						zap.String("url", ep.URL),
+						slog.String("id", ep.ID),
+						slog.String("title", ep.Title),
+						slog.String("url", ep.URL),
 					)
 				}
 			}
@@ -124,7 +125,7 @@ func (ub *UndercastBot) pollExpiredEpisodes(
 
 func (ub *UndercastBot) handleError(ctx context.Context, chatID int64, err error) {
 	id := uuid.New().String()
-	ub.logger.Error("error", zap.String("id", id), zaperr.ToField(err))
+	ub.logger.ErrorContext(ctx, "error", slog.String("id", id), slog.Any("error", err))
 	ub.sendTextMessage(ctx, chatID, fmt.Sprintf("An error occurred while processing your request. Please try again later. \nError ID: %s", id))
 }
 
@@ -133,6 +134,6 @@ func (ub *UndercastBot) sendTextMessage(ctx context.Context, chatID int64, messa
 		ChatID: chatID,
 		Text:   message,
 	}); err != nil {
-		ub.logger.Error("sendTextMessage error", zaperr.ToField(err))
+		ub.logger.ErrorContext(ctx, "sendTextMessage error", slog.Any("error", err))
 	}
 }

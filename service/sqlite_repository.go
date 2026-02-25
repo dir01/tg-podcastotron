@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/hori-ryota/zaperr"
-	"github.com/jmoiron/sqlx"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 func NewSqliteRepository(db *sql.DB) Repository {
@@ -24,20 +24,20 @@ type sqliteRepository struct {
 func (r *sqliteRepository) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
 	tx, err := r.db.Beginx()
 	if err != nil {
-		return zaperr.Wrap(err, "failed to begin tx")
+		return fmt.Errorf("failed to begin tx: %w", err)
 	}
 
 	ctx = context.WithValue(ctx, "tx", tx) //nolint:staticcheck
 	err = fn(ctx)
 	if err != nil {
 		if err := tx.Rollback(); err != nil {
-			return zaperr.Wrap(err, "failed to rollback tx")
+			return fmt.Errorf("failed to rollback tx: %w", err)
 		}
-		return zaperr.Wrap(err, "failed to execute tx")
+		return fmt.Errorf("failed to execute tx: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return zaperr.Wrap(err, "failed to commit tx")
+		return fmt.Errorf("failed to commit tx: %w", err)
 	}
 
 	return nil
@@ -65,7 +65,7 @@ func (r *sqliteRepository) NextEpisodeID(ctx context.Context, userID string) (ep
 		RETURNING episode_id
 	`, userID).Scan(&episodeID)
 	if err != nil {
-		return "", zaperr.Wrap(err, "failed to insert")
+		return "", fmt.Errorf("failed to insert: %w", err)
 	}
 
 	return strconv.FormatInt(episodeID, 10), nil
@@ -81,13 +81,13 @@ func (r *sqliteRepository) NextFeedID(ctx context.Context, userID string) (feedI
 		RETURNING feed_id
 	`, userID, &feedIDInt)
 	if err != nil {
-		return "", zaperr.Wrap(err, "failed to insert")
+		return "", fmt.Errorf("failed to insert: %w", err)
 	}
 
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		if err := rows.Scan(&feedIDInt); err != nil {
-			return "", zaperr.Wrap(err, "failed to scan")
+			return "", fmt.Errorf("failed to scan: %w", err)
 		}
 		break //nolint:staticcheck //loop is unconditionally terminated intentionally
 	}
@@ -112,7 +112,7 @@ func (r *sqliteRepository) SaveFeed(ctx context.Context, feed *Feed) (*Feed, err
 				url=:url,
 				is_permanent=:is_permanent
 	`, dbFeed); err != nil {
-		return nil, zaperr.Wrap(err, "failed to insert feed")
+		return nil, fmt.Errorf("failed to insert feed: %w", err)
 	}
 
 	return feed, nil
@@ -127,15 +127,15 @@ func (r *sqliteRepository) GetFeed(ctx context.Context, userID, feedID string) (
 	); err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get feed")
+		return nil, fmt.Errorf("failed to get feed: %w", err)
 	}
 
 	feeds, err := r.toBusinessFeeds([]dbFeed{dbF})
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get serialized feeds")
+		return nil, fmt.Errorf("failed to get serialized feeds: %w", err)
 	}
 	if len(feeds) != 1 {
-		return nil, zaperr.New("expected 1 feed")
+		return nil, fmt.Errorf("expected 1 feed")
 	}
 	return feeds[0], nil
 }
@@ -156,24 +156,24 @@ func (r *sqliteRepository) GetFeedsMap(ctx context.Context, userID string, feedI
 			"user_id": userID,
 		})
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to build query")
+		return nil, fmt.Errorf("failed to build query: %w", err)
 	}
 
 	query, args, err = sqlx.In(query, args...)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to build IN query")
+		return nil, fmt.Errorf("failed to build IN query: %w", err)
 	}
 
 	query = db.Rebind(query)
 
 	var dbFeeds []dbFeed
 	if err := sqlx.SelectContext(ctx, db, &dbFeeds, query, args...); err != nil {
-		return nil, zaperr.Wrap(err, "failed to get feeds")
+		return nil, fmt.Errorf("failed to get feeds: %w", err)
 	}
 
 	feeds, err := r.toBusinessFeeds(dbFeeds)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get feeds")
+		return nil, fmt.Errorf("failed to get feeds: %w", err)
 	}
 
 	result := make(map[string]*Feed, len(feeds))
@@ -189,7 +189,7 @@ func (r *sqliteRepository) ListUserFeeds(ctx context.Context, userID string) ([]
 	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &dbFeeds, `
 		SELECT * FROM feeds WHERE user_id = ? ORDER BY id`, userID,
 	); err != nil {
-		return nil, zaperr.Wrap(err, "failed to list user feeds")
+		return nil, fmt.Errorf("failed to list user feeds: %w", err)
 	}
 	return r.toBusinessFeeds(dbFeeds)
 }
@@ -201,7 +201,7 @@ func (r *sqliteRepository) DeleteFeed(ctx context.Context, userID string, feedID
 		  	AND user_id = ?`, feedID, userID,
 	)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to delete feeds")
+		return fmt.Errorf("failed to delete feeds: %w", err)
 	}
 	return nil
 }
@@ -214,7 +214,7 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 	db := r.dbFromContext(ctx)
 	dbEp, err := dbEpisode{}.FromBusinessModel(ep)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to serialize episode")
+		return nil, fmt.Errorf("failed to serialize episode: %w", err)
 	}
 
 	if _, err := sqlx.NamedExecContext(ctx, db, `
@@ -261,12 +261,12 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 				format = :format,
 				storage_key = :storage_key`, dbEp,
 	); err != nil {
-		return nil, zaperr.Wrap(err, "failed to insert ep")
+		return nil, fmt.Errorf("failed to insert ep: %w", err)
 	}
 
 	ep, err = dbEp.ToBusinessModel()
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to convert to business model")
+		return nil, fmt.Errorf("failed to convert to business model: %w", err)
 	}
 
 	return ep, nil
@@ -278,12 +278,12 @@ func (r *sqliteRepository) ListUserEpisodes(ctx context.Context, userID string) 
 	if res, err := r.dbFromContext(ctx).QueryxContext(ctx, `
 		SELECT * FROM episodes WHERE user_id = ?`, userID,
 	); err != nil {
-		return nil, zaperr.Wrap(err, "failed to query episodes")
+		return nil, fmt.Errorf("failed to query episodes: %w", err)
 	} else {
 		for res.Next() {
 			var dbEp dbEpisode
 			if err := res.StructScan(&dbEp); err != nil {
-				return nil, zaperr.Wrap(err, "failed to scan episode")
+				return nil, fmt.Errorf("failed to scan episode: %w", err)
 			}
 			dbEpisodes = append(dbEpisodes, dbEp)
 			epIDs = append(epIDs, dbEp.ID)
@@ -292,7 +292,7 @@ func (r *sqliteRepository) ListUserEpisodes(ctx context.Context, userID string) 
 
 	epFeedsMap := make(map[string][]string, len(epIDs))
 	if publications, err := r.ListPublicationsByEpisodeIDs(ctx, userID, epIDs); err != nil {
-		return nil, zaperr.Wrap(err, "failed to list episodes feeds")
+		return nil, fmt.Errorf("failed to list episodes feeds: %w", err)
 	} else {
 		for _, p := range publications {
 			if _, ok := epFeedsMap[p.EpisodeID]; !ok {
@@ -306,7 +306,7 @@ func (r *sqliteRepository) ListUserEpisodes(ctx context.Context, userID string) 
 	result := make([]*Episode, 0, len(dbEpisodes))
 	for _, dbEp := range dbEpisodes {
 		if ep, err := dbEp.ToBusinessModel(); err != nil {
-			return nil, zaperr.Wrap(err, "failed to convert episode to business model")
+			return nil, fmt.Errorf("failed to convert episode to business model: %w", err)
 		} else {
 			result = append(result, ep)
 		}
@@ -318,7 +318,7 @@ func (r *sqliteRepository) ListUserEpisodes(ctx context.Context, userID string) 
 func (r *sqliteRepository) ListFeedEpisodes(ctx context.Context, userID, feedID string) ([]*Episode, error) {
 	publications, err := r.ListPublicationsByFeedIDs(ctx, []string{feedID}, userID)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to list publications")
+		return nil, fmt.Errorf("failed to list publications: %w", err)
 	}
 
 	episodeIDs := make([]string, 0, len(publications))
@@ -328,14 +328,14 @@ func (r *sqliteRepository) ListFeedEpisodes(ctx context.Context, userID, feedID 
 
 	episodesMap, err := r.GetEpisodesMap(ctx, userID, episodeIDs)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to get episodes map")
+		return nil, fmt.Errorf("failed to get episodes map: %w", err)
 	}
 
 	result := make([]*Episode, 0, len(publications))
 	for _, p := range publications {
 		ep, ok := episodesMap[p.EpisodeID]
 		if !ok {
-			return nil, zaperr.New("episode not found")
+			return nil, fmt.Errorf("episode not found")
 		}
 		result = append(result, ep)
 	}
@@ -359,25 +359,25 @@ func (r *sqliteRepository) GetEpisodesMap(ctx context.Context, userID string, ep
 			"ids":     episodeIDs,
 		})
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to create query")
+		return nil, fmt.Errorf("failed to create query: %w", err)
 	}
 
 	query, args, err = sqlx.In(query, args...)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to create IN query")
+		return nil, fmt.Errorf("failed to create IN query: %w", err)
 	}
 
 	query = db.Rebind(query)
 
 	var dbEpisodes []dbEpisode
 	if err = sqlx.SelectContext(ctx, db, &dbEpisodes, query, args...); err != nil {
-		return nil, zaperr.Wrap(err, "failed to query episodes map")
+		return nil, fmt.Errorf("failed to query episodes map: %w", err)
 	}
 
 	epFeedsMap := make(map[string][]string, len(episodeIDs))
 	publications, err := r.ListPublicationsByEpisodeIDs(ctx, userID, episodeIDs)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to list episodes feeds")
+		return nil, fmt.Errorf("failed to list episodes feeds: %w", err)
 	}
 	for _, ef := range publications {
 		if _, ok := epFeedsMap[ef.EpisodeID]; !ok {
@@ -391,7 +391,7 @@ func (r *sqliteRepository) GetEpisodesMap(ctx context.Context, userID string, ep
 	for _, dbEp := range dbEpisodes {
 		ep, err := dbEp.ToBusinessModel()
 		if err != nil {
-			return nil, zaperr.Wrap(err, "failed to convert to business model")
+			return nil, fmt.Errorf("failed to convert to business model: %w", err)
 		}
 		result[ep.ID] = ep
 	}
@@ -411,16 +411,16 @@ func (r *sqliteRepository) DeleteEpisodes(ctx context.Context, userID string, ep
 		},
 	)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to create query")
+		return fmt.Errorf("failed to create query: %w", err)
 	}
 	query, args, err = sqlx.In(query, args...)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to create IN query")
+		return fmt.Errorf("failed to create IN query: %w", err)
 	}
 	query = db.Rebind(query)
 
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
-		return zaperr.Wrap(err, "failed to delete episodes")
+		return fmt.Errorf("failed to delete episodes: %w", err)
 	}
 
 	return nil
@@ -445,18 +445,18 @@ func (r *sqliteRepository) ListExpiredEpisodes(ctx context.Context, maxAge time.
 		"min_updated_at": minUpdatedAt,
 	})
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to create query")
+		return nil, fmt.Errorf("failed to create query: %w", err)
 	}
 
 	var dbEpisodes []dbEpisode
 	if err := sqlx.SelectContext(ctx, db, &dbEpisodes, query, args...); err != nil {
-		return nil, zaperr.Wrap(err, "failed to query episodes")
+		return nil, fmt.Errorf("failed to query episodes: %w", err)
 	}
 
 	result := make([]*Episode, len(dbEpisodes))
 	for idx, dbEp := range dbEpisodes {
 		if ep, err := dbEp.ToBusinessModel(); err != nil {
-			return nil, zaperr.Wrap(err, "failed to convert to business model")
+			return nil, fmt.Errorf("failed to convert to business model: %w", err)
 		} else {
 			result[idx] = ep
 		}
@@ -479,7 +479,7 @@ func (r *sqliteRepository) BulkInsertPublications(ctx context.Context, publicati
 			VALUES (:user_id, :feed_id, :episode_id, :created_at)`,
 			dbP,
 		); err != nil {
-			return zaperr.Wrap(err, "failed to insert feed")
+			return fmt.Errorf("failed to insert feed: %w", err)
 		}
 	}
 	return nil
@@ -501,25 +501,25 @@ func (r *sqliteRepository) ListPublicationsByEpisodeIDs(ctx context.Context, use
 			"episode_ids": episodeIDs,
 		})
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to create query")
+		return nil, fmt.Errorf("failed to create query: %w", err)
 	}
 
 	query, args, err = sqlx.In(query, args...)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to create IN query")
+		return nil, fmt.Errorf("failed to create IN query: %w", err)
 	}
 
 	query = r.dbFromContext(ctx).Rebind(query)
 
 	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &dbPublications, query, args...); err != nil {
-		return nil, zaperr.Wrap(err, "failed to query publications by episode ids")
+		return nil, fmt.Errorf("failed to query publications by episode ids: %w", err)
 	}
 
 	result := make([]*Publication, len(dbPublications))
 	for i, dbP := range dbPublications {
 		p, err := dbP.ToBusinessModel()
 		if err != nil {
-			return nil, zaperr.Wrap(err, "failed to convert to business model")
+			return nil, fmt.Errorf("failed to convert to business model: %w", err)
 		}
 		result[i] = p
 	}
@@ -543,26 +543,26 @@ func (r *sqliteRepository) ListPublicationsByFeedIDs(ctx context.Context, feedID
 			"feed_ids": feedIDs,
 		})
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to create query")
+		return nil, fmt.Errorf("failed to create query: %w", err)
 	}
 
 	query, args, err = sqlx.In(query, args...)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to create IN query")
+		return nil, fmt.Errorf("failed to create IN query: %w", err)
 	}
 
 	query = db.Rebind(query)
 
 	var dbPublications []dbPublication
 	if err := sqlx.SelectContext(ctx, db, &dbPublications, query, args...); err != nil {
-		return nil, zaperr.Wrap(err, "failed to query publications by feed ids")
+		return nil, fmt.Errorf("failed to query publications by feed ids: %w", err)
 	}
 
 	result := make([]*Publication, len(dbPublications))
 	for i, dbP := range dbPublications {
 		p, err := dbP.ToBusinessModel()
 		if err != nil {
-			return nil, zaperr.Wrap(err, "failed to convert to business model")
+			return nil, fmt.Errorf("failed to convert to business model: %w", err)
 		}
 		result[i] = p
 	}
@@ -586,18 +586,18 @@ func (r *sqliteRepository) DeletePublications(ctx context.Context, userID string
 			"ids":     publicationIDs,
 		})
 	if err != nil {
-		return zaperr.Wrap(err, "failed to create query")
+		return fmt.Errorf("failed to create query: %w", err)
 	}
 
 	query, args, err = sqlx.In(query, args...)
 	if err != nil {
-		return zaperr.Wrap(err, "failed to create IN query")
+		return fmt.Errorf("failed to create IN query: %w", err)
 	}
 
 	query = db.Rebind(query)
 
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
-		return zaperr.Wrap(err, "failed to delete publications")
+		return fmt.Errorf("failed to delete publications: %w", err)
 	}
 
 	return nil
@@ -612,7 +612,7 @@ func (r *sqliteRepository) toBusinessFeeds(dbFeeds []dbFeed) ([]*Feed, error) {
 	for i, dbF := range dbFeeds {
 		f, err := dbF.ToBusinessModel()
 		if err != nil {
-			return nil, zaperr.Wrap(err, "failed to convert to business model")
+			return nil, fmt.Errorf("failed to convert to business model: %w", err)
 		}
 		result[i] = f
 	}
@@ -672,12 +672,12 @@ func (dbEpisode) FromBusinessModel(ep *Episode) (*dbEpisode, error) {
 func (d dbEpisode) ToBusinessModel() (*Episode, error) {
 	createdAt, err := strToTime(d.CreatedAt)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to parse created_at")
+		return nil, fmt.Errorf("failed to parse created_at: %w", err)
 	}
 
 	updatedAt, err := strToTime(d.UpdatedAt)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to parse updated_at")
+		return nil, fmt.Errorf("failed to parse updated_at: %w", err)
 	}
 
 	var sourceFilePaths []string
@@ -760,7 +760,7 @@ func (dbPublication) FromBusinessModel(p *Publication) *dbPublication {
 func (p dbPublication) ToBusinessModel() (*Publication, error) {
 	createdAt, err := strToTime(p.CreatedAt)
 	if err != nil {
-		return nil, zaperr.Wrap(err, "failed to parse created at")
+		return nil, fmt.Errorf("failed to parse created at: %w", err)
 	}
 	return &Publication{
 		ID:        p.ID,
@@ -786,7 +786,7 @@ func timeToStr(t time.Time) string {
 func strToTime(s string) (time.Time, error) {
 	t, err := time.Parse(sqliteTimeFormat, s)
 	if err != nil {
-		return time.Time{}, zaperr.Wrap(err, "failed to parse time")
+		return time.Time{}, fmt.Errorf("failed to parse time: %w", err)
 	}
 	return t.UTC(), nil
 }

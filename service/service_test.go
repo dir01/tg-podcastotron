@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"log/slog"
+	"os"
+
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 	"tg-podcastotron/mediary"
 	"tg-podcastotron/mediary/mediarymocks"
 	"tg-podcastotron/service"
@@ -34,7 +36,7 @@ func TestService(t *testing.T) {
 	redisClient := redis.NewClient(opt)
 	defer func() { _ = redisClient.Close() }()
 
-	logger := must(zap.NewDevelopment())(t)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
@@ -78,7 +80,7 @@ func TestService(t *testing.T) {
 	obfuscateIDs := func(s string) string {
 		return s
 	}
-	svc := service.New(mockedMediary, repo, mockedS3Store, jobsQueue, "default-feed-title", obfuscateIDs, logger)
+	svc := service.New(mockedMediary, repo, mockedS3Store, jobsQueue, "default-feed-title", obfuscateIDs, logger, nil)
 
 	mkUserID := func() string {
 		return uuid.Must(uuid.NewRandom()).String()

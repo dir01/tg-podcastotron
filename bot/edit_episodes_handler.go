@@ -3,14 +3,13 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"github.com/hori-ryota/zaperr"
-	"go.uber.org/zap"
 	"tg-podcastotron/bot/ui/multiselect"
 	"tg-podcastotron/service"
 )
@@ -31,13 +30,6 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	userID := ub.extractUserID(update)
 	chatID := ub.extractChatID(update)
 
-	zapFields := []zap.Field{
-		zap.Int64("chat_id", chatID),
-		zap.String("message_text", update.Message.Text),
-		zap.String("user_id", userID),
-		zap.String("username", ub.extractUsername(update)),
-	}
-
 	epIDs := ub.parseEditEpisodesCmd(update.Message.Text)
 	if epIDs == nil {
 		if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
@@ -45,12 +37,10 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			Text:      editEpisodesHelp,
 			ParseMode: models.ParseModeHTML,
 		}); err != nil {
-			zapFields := append(zapFields, zaperr.ToField(err))
-			ub.logger.Error("sendTextMessage error", zapFields...)
+			ub.logger.ErrorContext(ctx, "sendTextMessage error", slog.Any("error", err))
 		}
 		return
 	}
-	zapFields = append(zapFields, zap.Strings("episode_ids", epIDs))
 
 	episodesMap, err := ub.service.GetEpisodesMap(ctx, userID, epIDs)
 	if err != nil {
@@ -60,7 +50,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 
 	feeds, err := ub.service.ListFeeds(ctx, userID)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to list feeds", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to list feeds: %w", err))
 		return
 	}
 	var feedMap = make(map[string]*service.Feed)
@@ -70,7 +60,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 
 	initialMessageText, err := ub.formatInitialMessage(epIDs, episodesMap, feedMap)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to format initial message", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to format initial message: %w", err))
 		return
 	}
 
@@ -101,8 +91,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: kb},
 	})
 	if err != nil {
-		zapFields = append(zapFields, zap.Any("message", initialMsg))
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to send message: %w", err))
 		return
 	}
 
@@ -111,8 +100,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			ChatID:    chatID,
 			MessageID: initialMsg.ID,
 		}); err != nil {
-			zapFields := append(zapFields, zaperr.ToField(err))
-			ub.logger.Error("failed to delete initial message", zapFields...)
+			ub.logger.ErrorContext(ctx, "failed to delete initial message", slog.Any("error", err))
 		}
 	}
 
@@ -127,8 +115,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 				ParseMode:   models.ParseModeHTML,
 				ReplyMarkup: &models.ForceReply{ForceReply: true},
 			}); err != nil {
-				zapFields = append(zapFields, zap.Any("message", renamePromptMsg))
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to send message: %w", err))
 				return
 			} else {
 				ub.bot.RegisterHandlerMatchFunc(
@@ -138,13 +125,12 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 					func(ctx context.Context, b *bot.Bot, update *models.Update) {
 						newTitlePattern := update.Message.Text
 						if err := ub.service.RenameEpisodes(ctx, userID, epIDs, newTitlePattern); err != nil {
-							ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to rename episodes", zapFields...))
+							ub.handleError(ctx, chatID, fmt.Errorf("failed to rename episodes: %w", err))
 							return
 						}
 
 						if _, err = ub.bot.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: renamePromptMsg.ID}); err != nil {
-							zapFields := append(zapFields, zaperr.ToField(err))
-							ub.logger.Error("failed to delete rename prompt message", zapFields...)
+							ub.logger.ErrorContext(ctx, "failed to delete rename prompt message", slog.Any("error", err))
 						}
 
 						msgTextParts := []string{fmt.Sprintf("%d episodes were renamed", len(epIDs))}
@@ -161,7 +147,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			}
 		case cmdDelete:
 			if err := ub.service.DeleteEpisodes(ctx, userID, epIDs); err != nil {
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to delete episodes", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to delete episodes: %w", err))
 				return
 			}
 
@@ -174,7 +160,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			items := make([]*multiselect.Item, len(feeds))
 			epFeedsMap, err := ub.service.GetPublishedFeedsMap(ctx, userID, epIDs)
 			if err != nil {
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get published feeds", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to get published feeds: %w", err))
 				return
 			}
 			for i, feed := range feeds {
@@ -204,7 +190,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 					}
 
 					if err := ub.service.PublishEpisodes(ctx, userID, epIDs, feedIDs); err != nil {
-						ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to set episodes feeds", zapFields...))
+						ub.handleError(ctx, chatID, fmt.Errorf("failed to set episodes feeds: %w", err))
 						return
 					}
 
@@ -222,7 +208,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 				ParseMode:   models.ParseModeHTML,
 				ReplyMarkup: feedSelector,
 			}); err != nil {
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to send message: %w", err))
 			}
 		}
 	})
@@ -258,7 +244,7 @@ func (ub *UndercastBot) formatInitialMessage(epIDs []string, episodesMap map[str
 	for _, epID := range epIDs {
 		ep := episodesMap[epID]
 		if ep == nil {
-			return "", zaperr.New("episode not found")
+			return "", fmt.Errorf("episode not found")
 		}
 		initialMessageParts = append(initialMessageParts, ub.renderEpisodeShort(ep)) // TODO: split into multiple messages if too long
 	}

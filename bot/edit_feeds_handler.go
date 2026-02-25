@@ -3,13 +3,12 @@ package bot
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"github.com/hori-ryota/zaperr"
-	"go.uber.org/zap"
 )
 
 const editFeedsHelp = `
@@ -17,7 +16,7 @@ const editFeedsHelp = `
 <code>/ef_</code>&lt;feed_id&gt;
 
 <b>Possible actions:</b>
-- <b>Rename Feed</b> - renames your feed 
+- <b>Rename Feed</b> - renames your feed
 - <b>Delete Feed</b> - deletes your feed, but keeps the episodes in your library
 - <b>Delete Feed and Episodes</b> - deletes your feed and all episodes in it from your library and disk
 `
@@ -27,12 +26,6 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 	chatID := ub.extractChatID(update)
 	userID := ub.extractUserID(update)
 
-	zapFields := []zap.Field{
-		zap.Int64("chat_id", chatID),
-		zap.String("user_id", userID),
-		zap.String("message_text", update.Message.Text),
-	}
-
 	feedID, err := ub.parseEditFeedsCmd(update.Message.Text)
 	if err != nil {
 		if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
@@ -40,19 +33,16 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 			Text:      editFeedsHelp,
 			ParseMode: models.ParseModeHTML,
 		}); err != nil {
-			zapFields := append(zapFields, zaperr.ToField(err))
-			ub.logger.Error("sendTextMessage error", zapFields...)
+			ub.logger.ErrorContext(ctx, "sendTextMessage error", slog.Any("error", err))
 		}
 		return
 	}
 
 	feed, err := ub.service.GetFeed(ctx, userID, feedID)
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to get feed", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to get feed: %w", err))
 		return
 	}
-
-	zapFields = append(zapFields, zap.String("feed_id", feedID))
 
 	prefix := fmt.Sprintf("editFeed_%s_%s", userID, bot.RandomString(10))
 	cmdRename := "rename"
@@ -107,7 +97,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: kb},
 	})
 	if err != nil {
-		ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to send message: %w", err))
 	}
 
 	deleteInitialMessage := func() {
@@ -115,7 +105,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 			ChatID:    chatID,
 			MessageID: initialMessage.ID,
 		}); err != nil {
-			ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to delete message", zapFields...))
+			ub.handleError(ctx, chatID, fmt.Errorf("failed to delete message: %w", err))
 		}
 	}
 
@@ -131,8 +121,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 				ParseMode:   models.ParseModeHTML,
 				ReplyMarkup: &models.ForceReply{ForceReply: true},
 			}); err != nil {
-				zapFields = append(zapFields, zap.Any("message", renamePromptMsg))
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to send message", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to send message: %w", err))
 				return
 			} else {
 				ub.bot.RegisterHandlerMatchFunc(
@@ -142,13 +131,12 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 					func(ctx context.Context, b *bot.Bot, update *models.Update) {
 						newTitle := update.Message.Text
 						if err := ub.service.RenameFeed(ctx, userID, feedID, newTitle); err != nil {
-							ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to rename feed", zapFields...))
+							ub.handleError(ctx, chatID, fmt.Errorf("failed to rename feed: %w", err))
 							return
 						}
 
 						if _, err = ub.bot.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: renamePromptMsg.ID}); err != nil {
-							zapFields := append(zapFields, zaperr.ToField(err))
-							ub.logger.Error("failed to delete rename prompt message", zapFields...)
+							ub.logger.ErrorContext(ctx, "failed to delete rename prompt message", slog.Any("error", err))
 						}
 
 						ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Feed %s was renamed to \"%s\"", feedID, newTitle))
@@ -161,7 +149,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 			shouldDeleteEpisodes := st == cmdDeleteFeedAndEpisodes
 
 			if err := ub.service.DeleteFeed(ctx, userID, feedID, shouldDeleteEpisodes); err != nil {
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to delete episodes", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to delete episodes: %w", err))
 				return
 			}
 
@@ -175,7 +163,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 
 		case cmdMakePermanent:
 			if err := ub.service.MarkFeedAsPermanent(ctx, userID, feedID); err != nil {
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to mark feed as permanent", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to mark feed as permanent: %w", err))
 				return
 			}
 
@@ -185,7 +173,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 
 		case cmdMakeEphemeral:
 			if err := ub.service.MarkFeedAsEphemeral(ctx, userID, feedID); err != nil {
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to mark feed as ephemeral", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to mark feed as ephemeral: %w", err))
 				return
 			}
 
@@ -195,7 +183,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 
 		case cmdRegenerateFeed:
 			if err := ub.service.RegenerateFeed(ctx, userID, feedID); err != nil {
-				ub.handleError(ctx, chatID, zaperr.Wrap(err, "failed to regenerate feed", zapFields...))
+				ub.handleError(ctx, chatID, fmt.Errorf("failed to regenerate feed: %w", err))
 				return
 			}
 

@@ -3,7 +3,8 @@ package auth
 import (
 	"context"
 	"database/sql"
-	"github.com/hori-ryota/zaperr"
+	"fmt"
+
 	"github.com/jmoiron/sqlx"
 )
 
@@ -18,7 +19,7 @@ type sqliteRepository struct {
 func (s *sqliteRepository) AddUser(ctx context.Context, user *User) error {
 	result := s.db.MustExecContext(ctx, "INSERT INTO users (id) VALUES (?)", user.ID)
 	if _, err := result.RowsAffected(); err != nil {
-		return zaperr.Wrap(err, "failed to insert user")
+		return fmt.Errorf("failed to insert user: %w", err)
 	}
 	return nil
 }
@@ -29,7 +30,7 @@ func (s *sqliteRepository) GetUser(ctx context.Context, userID string) (*User, e
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
-		return nil, zaperr.Wrap(err, "failed to select user")
+		return nil, fmt.Errorf("failed to select user: %w", err)
 	}
 	return user, nil
 }

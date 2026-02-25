@@ -2,12 +2,12 @@ package jobsqueue
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
-	"github.com/hori-ryota/zaperr"
 	"github.com/redis/go-redis/v9"
 	work2 "github.com/taylorchu/work"
-	"go.uber.org/zap"
+	"tg-podcastotron/telemetry"
 )
 
 type RJQ struct {
@@ -15,17 +15,17 @@ type RJQ struct {
 	work2Worker *work2.Worker
 	namespace   string
 	concurrency int
-	logger      *zap.Logger
+	logger      *slog.Logger
 }
 
-func NewRedisJobsQueue(redisClient *redis.Client, concurrency int, namespace string, logger *zap.Logger) (*RJQ, error) {
+func NewRedisJobsQueue(redisClient *redis.Client, concurrency int, namespace string, logger *slog.Logger) (*RJQ, error) {
 	jobsQueue := &RJQ{
 		work2Queue: work2.NewRedisQueue(redisClient),
 		work2Worker: work2.NewWorker(&work2.WorkerOptions{
 			Namespace: namespace,
 			Queue:     work2.NewRedisQueue(redisClient),
 			ErrorFunc: func(err error) {
-				logger.Error("failed to handle job", zaperr.ToField(err))
+				logger.ErrorContext(context.Background(), "failed to handle job", slog.Any("error", err))
 			},
 		}),
 		namespace:   namespace,
@@ -46,11 +46,11 @@ func (r *RJQ) Shutdown() {
 func (r *RJQ) Publish(ctx context.Context, jobType string, payload any) error {
 	job := work2.NewJob()
 	if err := job.MarshalJSONPayload(payload); err != nil {
-		return zaperr.Wrap(err, "failed to marshal payload")
+		return telemetry.LogError(r.logger, ctx, err, "failed to marshal payload")
 	}
 
 	if err := r.work2Queue.Enqueue(job, &work2.EnqueueOptions{Namespace: r.namespace, QueueID: jobType}); err != nil {
-		return zaperr.Wrap(err, "failed to enqueue job")
+		return telemetry.LogError(r.logger, ctx, err, "failed to enqueue job")
 	}
 
 	return nil
@@ -59,7 +59,7 @@ func (r *RJQ) Publish(ctx context.Context, jobType string, payload any) error {
 func (r *RJQ) Subscribe(ctx context.Context, jobType string, f func(payloadBytes []byte) error) {
 	err := r.work2Worker.Register(jobType, func(job *work2.Job, opt *work2.DequeueOptions) error {
 		if err := f(job.Payload); err != nil {
-			r.logger.Error("failed to handle job", zaperr.ToField(err))
+			r.logger.ErrorContext(ctx, "failed to handle job", slog.Any("error", err))
 			return err
 		}
 		return nil
@@ -69,6 +69,6 @@ func (r *RJQ) Subscribe(ctx context.Context, jobType string, f func(payloadBytes
 		NumGoroutines:    int64(r.concurrency),
 	})
 	if err != nil {
-		r.logger.Error("failed to register job", zaperr.ToField(err))
+		r.logger.ErrorContext(ctx, "failed to register job", slog.Any("error", err))
 	}
 }

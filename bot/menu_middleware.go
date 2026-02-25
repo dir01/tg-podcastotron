@@ -3,7 +3,7 @@ package bot
 import (
 	"context"
 	"fmt"
-	"github.com/hori-ryota/zaperr"
+	"log/slog"
 	"net/url"
 
 	"github.com/go-telegram/bot"
@@ -44,7 +44,7 @@ func (ub *UndercastBot) setMenuMiddleware(next bot.HandlerFunc) bot.HandlerFunc 
 
 		if !sentMenusCache[cacheKey] {
 			if _, err := b.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: commands}); err != nil {
-				ub.logger.Error("setMenuMiddleware error", zaperr.ToField(err))
+				ub.logger.ErrorContext(ctx, "setMenuMiddleware error", slog.Any("error", err))
 			}
 			sentMenusCache[cacheKey] = true
 		}

@@ -2,9 +2,8 @@ package auth
 
 import (
 	"context"
-
-	"github.com/hori-ryota/zaperr"
-	"go.uber.org/zap"
+	"fmt"
+	"log/slog"
 )
 
 type User struct {
@@ -16,7 +15,7 @@ type Repository interface {
 	GetUser(ctx context.Context, userID string) (*User, error)
 }
 
-func New(adminUsername string, repository Repository, logger *zap.Logger) *Service {
+func New(adminUsername string, repository Repository, logger *slog.Logger) *Service {
 	return &Service{
 		adminUsername: adminUsername,
 		repository:    repository,
@@ -27,26 +26,26 @@ func New(adminUsername string, repository Repository, logger *zap.Logger) *Servi
 type Service struct {
 	adminUsername string
 	repository    Repository
-	logger        *zap.Logger
+	logger        *slog.Logger
 }
 
 func (auth *Service) AddUser(ctx context.Context, userID string) error {
 	user := &User{ID: userID}
 	if err := auth.repository.AddUser(ctx, user); err != nil {
-		return zaperr.Wrap(err, "failed to add user")
+		return fmt.Errorf("failed to add user: %w", err)
 	}
 	return nil
 }
 
 func (auth *Service) IsAuthenticated(ctx context.Context, userID string, username string) (bool, error) {
 	if isAdmin, err := auth.IsAdmin(ctx, username); err != nil {
-		return false, zaperr.Wrap(err, "error while checking if user is admin")
+		return false, fmt.Errorf("error while checking if user is admin: %w", err)
 	} else if isAdmin {
 		return true, nil
 	}
 
 	if user, err := auth.repository.GetUser(ctx, userID); err != nil {
-		return false, zaperr.Wrap(err, "failed to get user")
+		return false, fmt.Errorf("failed to get user: %w", err)
 	} else {
 		return user != nil, nil
 	}

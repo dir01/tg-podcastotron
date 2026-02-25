@@ -5,13 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hori-ryota/zaperr"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
 )
 
 //go:generate moq -out mediarymocks/service.go -pkg mediarymocks -rm . Service:ServiceMock
@@ -22,7 +21,7 @@ type Service interface {
 	FetchJobStatusMap(ctx context.Context, jobIDs []string) (map[string]*JobStatus, error)
 }
 
-func New(mediaryURL string, logger *zap.Logger) Service {
+func New(mediaryURL string, logger *slog.Logger) Service {
 	return &service{
 		logger:  logger,
 		baseURL: mediaryURL,
@@ -30,7 +29,7 @@ func New(mediaryURL string, logger *zap.Logger) Service {
 }
 
 type service struct {
-	logger  *zap.Logger
+	logger  *slog.Logger
 	baseURL string
 }
 
@@ -92,7 +91,7 @@ const (
 func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, error) {
 	// TODO: should not depend on metadata endpoint, implement /is_valid in mediary
 	fullURL := fmt.Sprintf("%s/metadata/long-polling?url=%s", svc.baseURL, mediaURL)
-	svc.logger.Debug("checking if URL is valid", zap.String("url", fullURL))
+	svc.logger.DebugContext(ctx, "checking if URL is valid", slog.String("url", fullURL))
 
 	resp, err := http.Get(fullURL)
 	if err != nil {
@@ -114,7 +113,7 @@ func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, erro
 
 func (svc *service) FetchMetadataLongPolling(ctx context.Context, mediaURL string) (*Metadata, error) {
 	fullURL := fmt.Sprintf("%s/metadata/long-polling?url=%s", svc.baseURL, mediaURL)
-	svc.logger.Debug("fetching metadata", zap.String("url", fullURL))
+	svc.logger.DebugContext(ctx, "fetching metadata", slog.String("url", fullURL))
 
 	bodyBytes, err := json.Marshal(map[string]string{
 		"url": mediaURL,
@@ -149,7 +148,7 @@ func (svc *service) FetchMetadataLongPolling(ctx context.Context, mediaURL strin
 
 func (svc *service) CreateUploadJob(ctx context.Context, params *CreateUploadJobParams) (jobID string, err error) {
 	fullURL := fmt.Sprintf("%s/jobs", svc.baseURL)
-	svc.logger.Debug("creating upload job", zap.String("url", fullURL))
+	svc.logger.DebugContext(ctx, "creating upload job", slog.String("url", fullURL))
 
 	payload, err := json.Marshal(params)
 	if err != nil {
@@ -176,7 +175,7 @@ func (svc *service) CreateUploadJob(ctx context.Context, params *CreateUploadJob
 		return "", fmt.Errorf("error decoding mediary response: %w", err)
 	}
 
-	svc.logger.Debug("got mediary response", zap.Any("response", respBody))
+	svc.logger.DebugContext(ctx, "got mediary response", slog.Any("response", respBody))
 
 	if respBody.Status != "accepted" {
 		return "", fmt.Errorf("mediary returned status %s", respBody.Status)
@@ -196,20 +195,20 @@ func (svc *service) FetchJobStatusMap(ctx context.Context, jobIDs []string) (map
 			defer wg.Done()
 
 			fullURL := fmt.Sprintf("%s/jobs/%s", svc.baseURL, jobID)
-			svc.logger.Debug("fetching job status", zap.String("url", fullURL))
+			svc.logger.DebugContext(ctx, "fetching job status", slog.String("url", fullURL))
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 			if err != nil {
-				svc.logger.Error("failed to create request", zaperr.ToField(err))
+				svc.logger.ErrorContext(ctx, "failed to create request", slog.Any("error", err))
 				return
 			}
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
-				svc.logger.Error("failed to call mediary API", zaperr.ToField(err))
+				svc.logger.ErrorContext(ctx, "failed to call mediary API", slog.Any("error", err))
 				return
 			}
 			var jobStatus JobStatus
 			if err := json.NewDecoder(resp.Body).Decode(&jobStatus); err != nil {
-				svc.logger.Error("error decoding mediary response", zaperr.ToField(err))
+				svc.logger.ErrorContext(ctx, "error decoding mediary response", slog.Any("error", err))
 				return
 			}
 			jobStatusChan <- &jobStatus
