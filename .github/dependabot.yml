@@ -11,11 +11,23 @@ updates:
       interval: "monthly"
     allow:
       - dependency-type: "direct"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "monthly"
+    groups:
+      docker-dependencies:
+        patterns:
+          - "*"
   - package-ecosystem: "github-actions"
     directory: ".github/workflows"
     schedule:
       interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
