@@ -14,10 +14,16 @@ func (ub *UndercastBot) addUserHandler(ctx context.Context, _ *bot.Bot, update *
 	isAdmin, err := ub.auth.IsAdmin(ctx, ub.extractUsername(update))
 	if err != nil {
 		ub.handleError(ctx, chatID, err)
+		return
 	}
 
 	if !isAdmin {
 		ub.sendTextMessage(ctx, chatID, "unknown command")
+		return
+	}
+
+	if update.Message == nil || update.Message.Contact == nil {
+		ub.sendTextMessage(ctx, chatID, "please share a contact")
 		return
 	}
 

@@ -90,6 +90,12 @@ func Initialize(ctx context.Context, cfg Config) (*Telemetry, error) {
 		slog.SetDefault(logger)
 	}
 
+	// Redirect OTel SDK internal errors (e.g. export failures) to debug level
+	// instead of the default log.Print which surfaces as INFO via slog.SetDefault.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		logger.Debug("otel internal error", slog.Any("error", err))
+	}))
+
 	// Create shutdown function
 	shutdown := func(ctx context.Context) error {
 		if err := tracerProvider.Shutdown(ctx); err != nil {

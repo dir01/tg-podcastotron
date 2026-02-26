@@ -32,7 +32,7 @@ services:
     image: jaegertracing/all-in-one:latest
     ports:
       - "16686:16686" # Jaeger UI
-      - "14250:14250" # gRPC
+      - "4317:4317"   # OTLP gRPC (used by otel-collector)
 
   prometheus:
     image: prom/prometheus:latest

@@ -49,7 +49,7 @@ type UndercastBot struct {
 func (ub *UndercastBot) Start(ctx context.Context) error {
 	opts := []bot.Option{
 		bot.WithDefaultHandler(ub.urlHandler),
-		bot.WithMiddlewares(ub.authenticate, ub.setMenuMiddleware),
+		bot.WithMiddlewares(ub.trace, ub.authenticate, ub.setMenuMiddleware),
 	}
 
 	ub.episodesStatusChangesChan = ub.service.Start(ctx)
