@@ -17,7 +17,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/redis/go-redis/extra/redisotel/v9 v9.18.0
 	github.com/redis/go-redis/v9 v9.18.0
-	github.com/rubenv/sql-migrate v1.7.0
+	github.com/rubenv/sql-migrate v1.8.1
 	github.com/taylorchu/work v0.3.1
 	github.com/testcontainers/testcontainers-go v0.40.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.15.0
