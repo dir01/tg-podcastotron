@@ -10,8 +10,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
-	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -112,64 +110,42 @@ func Initialize(ctx context.Context, cfg Config) (*Telemetry, error) {
 }
 
 func initTracerProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sdktrace.TracerProvider, error) {
-	var exporter sdktrace.SpanExporter
-	var err error
+	opts := []sdktrace.TracerProviderOption{
+		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	}
 
-	if cfg.Environment == "production" && cfg.OTLPEndpoint != "" {
-		// Use OTLP exporter for production
-		exporter, err = otlptracegrpc.New(ctx,
+	if cfg.OTLPEndpoint != "" {
+		exporter, err := otlptracegrpc.New(ctx,
 			otlptracegrpc.WithEndpoint(cfg.OTLPEndpoint),
 			otlptracegrpc.WithInsecure(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
 		}
-	} else {
-		// Use stdout exporter for development
-		exporter, err = stdouttrace.New(
-			stdouttrace.WithPrettyPrint(),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create stdout trace exporter: %w", err)
-		}
+		opts = append(opts, sdktrace.WithBatcher(exporter))
 	}
 
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-	)
-
-	return tp, nil
+	return sdktrace.NewTracerProvider(opts...), nil
 }
 
 func initMeterProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sdkmetric.MeterProvider, error) {
-	var exporter sdkmetric.Exporter
-	var err error
+	opts := []sdkmetric.Option{
+		sdkmetric.WithResource(res),
+	}
 
-	if cfg.Environment == "production" && cfg.OTLPEndpoint != "" {
-		// Use OTLP exporter for production
-		exporter, err = otlpmetricgrpc.New(ctx,
+	if cfg.OTLPEndpoint != "" {
+		exporter, err := otlpmetricgrpc.New(ctx,
 			otlpmetricgrpc.WithEndpoint(cfg.OTLPEndpoint),
 			otlpmetricgrpc.WithInsecure(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OTLP metric exporter: %w", err)
 		}
-	} else {
-		// Use stdout exporter for development
-		exporter, err = stdoutmetric.New()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create stdout metric exporter: %w", err)
-		}
+		opts = append(opts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)))
 	}
 
-	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
-		sdkmetric.WithResource(res),
-	)
-
-	return mp, nil
+	return sdkmetric.NewMeterProvider(opts...), nil
 }
 
 // multiHandler is a simple handler that writes to multiple handlers
