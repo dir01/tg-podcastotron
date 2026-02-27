@@ -58,7 +58,7 @@ func Initialize(ctx context.Context, cfg Config) (*Telemetry, error) {
 	// Initialize meter provider
 	meterProvider, err := initMeterProvider(ctx, cfg, res)
 	if err != nil {
-		tracerProvider.Shutdown(ctx)
+		_ = tracerProvider.Shutdown(ctx)
 		return nil, fmt.Errorf("failed to initialize meter provider: %w", err)
 	}
 	otel.SetMeterProvider(meterProvider)
