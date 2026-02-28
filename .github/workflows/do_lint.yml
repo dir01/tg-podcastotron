@@ -1,27 +1,21 @@
-name: Run linter and tests
+name: Lint
 
 on: workflow_call
 
 jobs:
-  lint-test:
+  lint:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write # allows golangci-lint-action to annotate PR diffs
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: 1.24.x
           cache: false # golangci-lint-action manages its own cache
 
-      - name: Run linter
-        uses: golangci/golangci-lint-action@v9.2.0
+      - uses: golangci/golangci-lint-action@v6
         with:
           version: v2.10.1
-
-      - name: Run tests
-        run: make test
