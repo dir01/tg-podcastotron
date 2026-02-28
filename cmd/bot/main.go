@@ -15,8 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/joho/godotenv"
-	"github.com/redis/go-redis/extra/redisotel/v9"
-	"github.com/redis/go-redis/v9"
 	_ "github.com/mattn/go-sqlite3"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -67,7 +65,6 @@ func main() {
 	botToken := mustGetEnv("BOT_TOKEN")
 	adminUsername := mustGetEnv("ADMIN_USERNAME")
 	mediaryURL := mustGetEnv("MEDIARY_URL")
-	bgJobsRedisURL := mustGetEnv("REDIS_URL_BG_JOBS")
 	awsRegion := mustGetEnv("AWS_REGION")
 	awsAccessKeyID := mustGetEnv("AWS_ACCESS_KEY_ID")
 	awsSecretAccessKey := mustGetEnv("AWS_SECRET_ACCESS_KEY")
@@ -78,36 +75,6 @@ func main() {
 	if dbPath == "" {
 		dbPath = "./db/sqlite.db"
 	}
-	// endregion
-
-	// region redis
-	mkRedisClient := func(url string) (client *redis.Client, teardown func()) {
-		opt, err := redis.ParseURL(url)
-		if err != nil {
-			logger.ErrorContext(ctx, "error parsing redis url", slog.Any("error", err))
-			os.Exit(1)
-		}
-		redisClient := redis.NewClient(opt)
-		if err := redisotel.InstrumentTracing(redisClient); err != nil {
-			logger.ErrorContext(ctx, "error instrumenting redis tracing", slog.Any("error", err))
-			os.Exit(1)
-		}
-		if err := redisotel.InstrumentMetrics(redisClient); err != nil {
-			logger.ErrorContext(ctx, "error instrumenting redis metrics", slog.Any("error", err))
-			os.Exit(1)
-		}
-		if _, err := redisClient.Ping(ctx).Result(); err != nil {
-			logger.ErrorContext(ctx, "error connecting to redis", slog.Any("error", err))
-			os.Exit(1)
-		}
-		return redisClient, func() {
-			if err := redisClient.Close(); err != nil {
-				logger.ErrorContext(ctx, "error closing redis client", slog.Any("error", err))
-			}
-		}
-	}
-	bgJobsRedisClient, cleanupBgJobsRedisClient := mkRedisClient(bgJobsRedisURL)
-	defer cleanupBgJobsRedisClient()
 	// endregion
 
 	// region s3 client
@@ -143,14 +110,6 @@ func main() {
 	logger.DebugContext(ctx, "created bucket", slog.String("bucket", awsBucketName), slog.Any("error", err))
 	// endregion
 
-	// region jobs queue
-	jobsQueue, err := jobsqueue.NewRedisJobsQueue(bgJobsRedisClient, 2, "undercast:jobs", logger)
-	if err != nil {
-		logger.ErrorContext(ctx, "error creating jobs queue", slog.Any("error", err))
-		os.Exit(1)
-	}
-	// endregion
-
 	mediaryService := mediary.New(mediaryURL, logger)
 
 	db, err := otelsql.Open("sqlite3", dbPath,
@@ -161,6 +120,12 @@ func main() {
 		os.Exit(1)
 	}
 	otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemSqlite)) //nolint:errcheck
+
+	jobsQueue, err := jobsqueue.New(db, 2, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "error creating jobs queue", slog.Any("error", err))
+		os.Exit(1)
+	}
 
 	svcRepo := service.NewSqliteRepository(db)
 	s3Store := service.NewS3Store(s3Client, awsBucketName)

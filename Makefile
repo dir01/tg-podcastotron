@@ -20,7 +20,7 @@ test:  # Run tests
 .PHONY: test
 
 lint:  # Run linter
-	docker run -t --rm -v $$(pwd):/app -w /app golangci/golangci-lint:v2.10.1 golangci-lint run -v --timeout 5m
+	golangci-lint run -v --timeout 5m
 .PHONY: lint
 
 generate:  # Generate code
