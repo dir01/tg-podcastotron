@@ -2,134 +2,147 @@ package jobsqueue
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
-	"log/slog"
-	"os"
-
-	"github.com/redis/go-redis/v9"
-	tests "tg-podcastotron/testutils"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-func TestRedisJobsQueue(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
-	defer cancel()
-
-	redisURL, teardown, err := tests.GetFakeRedisURL(ctx)
-	defer teardown()
-	if err != nil {
-		t.Fatalf("error getting redis url: %v", err)
-	}
-
-	opt, _ := redis.ParseURL(redisURL)
-	redisClient := redis.NewClient(opt)
-	defer func() { _ = redisClient.Close() }()
-
+func TestSQLJobsQueue(t *testing.T) {
 	t.Run("job is persisted", func(t *testing.T) {
-		// First publish, then subscribe. Job should arrive
-		queue, err := NewRedisJobsQueue(redisClient, 10, randomPrefix(), logger)
-		if err != nil {
-			t.Errorf("error creating redis job queue: %v", err)
-		}
+		// Publish before subscribe — job should still be delivered.
+		queue := newTestQueue(t, 10)
 		defer queue.Shutdown()
 
-		err = queue.Publish(ctx, "some-job-type", map[string]string{"foo": "bar"})
-		if err != nil {
-			t.Errorf("error publishing job: %v", err)
+		ctx := context.Background()
+		if err := queue.Publish(ctx, "some-job-type", map[string]string{"foo": "bar"}); err != nil {
+			t.Fatalf("error publishing job: %v", err)
 		}
 
-		var callCountMutex sync.RWMutex
-		callCountMutex.Lock()
+		var mu sync.Mutex
 		callCount := 0
-		callCountMutex.Unlock()
-		queue.Subscribe(ctx, "some-job-type", func(payloadBytes []byte) error {
+		queue.Subscribe(ctx, "some-job-type", func(ctx context.Context, payloadBytes []byte) error {
 			var result map[string]string
-			err := json.Unmarshal(payloadBytes, &result)
-			if err != nil {
+			if err := json.Unmarshal(payloadBytes, &result); err != nil {
 				return err
 			}
-			callCountMutex.Lock()
-			defer callCountMutex.Unlock()
+			mu.Lock()
+			defer mu.Unlock()
 			callCount++
 			return nil
 		})
 		queue.Run()
 
-		if eventually(20*time.Second, func() bool {
-			callCountMutex.RLock()
-			defer callCountMutex.RUnlock()
+		if !eventually(20*time.Second, func() bool {
+			mu.Lock()
+			defer mu.Unlock()
 			return callCount == 1
-		}) != true {
-			t.Errorf("job was never delivered to subscriber")
+		}) {
+			t.Error("job was never delivered to subscriber")
 		}
 	})
 
-	t.Run("job is retried", func(t *testing.T) {
-		// If job is failed once, it will be retried shortly after
-		queue, err := NewRedisJobsQueue(redisClient, 10, randomPrefix(), logger)
-		if err != nil {
-			t.Errorf("error creating redis job queue: %v", err)
-		}
+	t.Run("job is retried on failure", func(t *testing.T) {
+		queue := newTestQueue(t, 10)
 		defer queue.Shutdown()
 
-		err = queue.Publish(ctx, "some-job-type", map[string]string{"foo": "bar"})
-		if err != nil {
-			t.Errorf("error publishing job: %v", err)
+		ctx := context.Background()
+		if err := queue.Publish(ctx, "some-job-type", map[string]string{"foo": "bar"}); err != nil {
+			t.Fatalf("error publishing job: %v", err)
 		}
 
-		var callCountMutex sync.RWMutex
-		callCountMutex.Lock()
+		var mu sync.Mutex
 		callCount := 0
-		callCountMutex.Unlock()
-		queue.Subscribe(ctx, "some-job-type", func(payloadBytes []byte) error {
-			callCountMutex.Lock()
-			defer callCountMutex.Unlock()
+		queue.Subscribe(ctx, "some-job-type", func(ctx context.Context, payloadBytes []byte) error {
+			mu.Lock()
+			defer mu.Unlock()
 			callCount++
 			if callCount < 2 {
-				return fmt.Errorf("some error")
+				return fmt.Errorf("transient error")
 			}
 			return nil
 		})
-
 		queue.Run()
 
-		if eventually(60*time.Second, func() bool {
-			callCountMutex.RLock()
-			defer callCountMutex.RUnlock()
-			return callCount == 2
-		}) != true {
-			t.Errorf("job was never retried")
+		if !eventually(60*time.Second, func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return callCount >= 2
+		}) {
+			t.Error("job was never retried")
 		}
 	})
+
+	t.Run("delayed job", func(t *testing.T) {
+		queue := newTestQueue(t, 10)
+		defer queue.Shutdown()
+
+		ctx := context.Background()
+		delay := 300 * time.Millisecond
+		publishedAt := time.Now()
+		if err := queue.Publish(ctx, "delayed-job", "payload", WithDelay(delay)); err != nil {
+			t.Fatalf("error publishing delayed job: %v", err)
+		}
+
+		var mu sync.Mutex
+		var deliveredAt time.Time
+		queue.Subscribe(ctx, "delayed-job", func(ctx context.Context, _ []byte) error {
+			mu.Lock()
+			defer mu.Unlock()
+			deliveredAt = time.Now()
+			return nil
+		})
+		queue.Run()
+
+		if !eventually(10*time.Second, func() bool {
+			mu.Lock()
+			defer mu.Unlock()
+			return !deliveredAt.IsZero()
+		}) {
+			t.Fatal("delayed job was never delivered")
+		}
+
+		elapsed := deliveredAt.Sub(publishedAt)
+		if elapsed < delay {
+			t.Errorf("job was delivered too early: elapsed=%v, expected>=%v", elapsed, delay)
+		}
+	})
+}
+
+func newTestQueue(t *testing.T, concurrency int) *SQLJobsQueue {
+	t.Helper()
+	// Use a file-based SQLite with WAL mode so multiple goroutines can access it concurrently.
+	dbPath := "file:" + t.TempDir() + "/queue.db?_journal_mode=WAL&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("error opening sqlite db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	q, err := New(db, concurrency, logger)
+	if err != nil {
+		t.Fatalf("error creating jobs queue: %v", err)
+	}
+	return q
 }
 
 func eventually(timeout time.Duration, f func() bool) bool {
-	timeoutChan := time.After(timeout)
+	deadline := time.Now().Add(timeout)
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
-
-	for {
-		select {
-		case <-timeoutChan:
-			return false
-		case <-tick.C:
-			if f() {
-				return true
-			}
+	for time.Now().Before(deadline) {
+		<-tick.C
+		if f() {
+			return true
 		}
 	}
-}
-
-func randomPrefix() (str string) {
-	b := make([]byte, 24)
-	rand.Read(b) //nolint:staticcheck //crypto rand is not required for tests
-	return fmt.Sprintf("mediary:%x", b)
-
+	return false
 }

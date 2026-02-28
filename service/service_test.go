@@ -3,38 +3,25 @@ package service_test
 import (
 	"context"
 	"database/sql"
-	migrate "github.com/rubenv/sql-migrate"
+	"log/slog"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"log/slog"
-	"os"
-
-	"github.com/redis/go-redis/v9"
+	migrate "github.com/rubenv/sql-migrate"
 	"tg-podcastotron/mediary"
 	"tg-podcastotron/mediary/mediarymocks"
 	"tg-podcastotron/service"
 	jobsqueue "tg-podcastotron/service/jobs_queue"
 	"tg-podcastotron/service/servicemocks"
-	tests "tg-podcastotron/testutils"
 )
 
 func TestService(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
-
-	redisURL, teardown, err := tests.GetFakeRedisURL(ctx)
-	defer teardown()
-	if err != nil {
-		t.Fatalf("error getting redis url: %v", err)
-	}
-
-	opt := must(redis.ParseURL(redisURL))(t)
-	redisClient := redis.NewClient(opt)
-	defer func() { _ = redisClient.Close() }()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
@@ -51,9 +38,7 @@ func TestService(t *testing.T) {
 		t.Fatalf("failed to apply migrations: %v", err)
 	}
 
-	jobsQueue := must(
-		jobsqueue.NewRedisJobsQueue(redisClient, 1, "some-jobs-namespace", logger),
-	)(t)
+	jobsQueue := must(jobsqueue.New(db, 1, logger))(t)
 	mockedMediary := &mediarymocks.ServiceMock{
 		CreateUploadJobFunc: func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error) {
 			return "some-job-id", nil
