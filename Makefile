@@ -27,6 +27,10 @@ generate:  # Generate code
 	go generate ./...
 .PHONY: generate
 
+build-image:  # Build the Docker image locally for the current platform
+	docker build -t tg-podcastotron:local .
+.PHONY: build-image
+
 docker-compose-up:  # Run required services (from docker-compose.yml)
 	docker-compose up -d
 .PHONY: docker-compose-up
