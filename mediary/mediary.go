@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
 )
 
 //go:generate moq -out mediarymocks/service.go -pkg mediarymocks -rm . Service:ServiceMock
@@ -21,16 +20,18 @@ type Service interface {
 	FetchJobStatusMap(ctx context.Context, jobIDs []string) (map[string]*JobStatus, error)
 }
 
-func New(mediaryURL string, logger *slog.Logger) Service {
+func New(mediaryURL string, httpClient *http.Client, logger *slog.Logger) Service {
 	return &service{
-		logger:  logger,
-		baseURL: mediaryURL,
+		logger:     logger,
+		baseURL:    mediaryURL,
+		httpClient: httpClient,
 	}
 }
 
 type service struct {
-	logger  *slog.Logger
-	baseURL string
+	logger     *slog.Logger
+	baseURL    string
+	httpClient *http.Client
 }
 
 type Metadata struct {
@@ -93,7 +94,11 @@ func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, erro
 	fullURL := fmt.Sprintf("%s/metadata/long-polling?url=%s", svc.baseURL, mediaURL)
 	svc.logger.DebugContext(ctx, "checking if URL is valid", slog.String("url", fullURL))
 
-	resp, err := http.Get(fullURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := svc.httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("failed to call mediary API: %w", err)
 	}
@@ -123,7 +128,12 @@ func (svc *service) FetchMetadataLongPolling(ctx context.Context, mediaURL strin
 	}
 
 	reqBody := bytes.NewBufferString(string(bodyBytes))
-	resp, err := http.Post(fullURL, "application/json", reqBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := svc.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call mediary API: %w", err)
 	}
@@ -155,7 +165,12 @@ func (svc *service) CreateUploadJob(ctx context.Context, params *CreateUploadJob
 		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	resp, err := http.Post(fullURL, "application/json", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := svc.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to call mediary API: %w", err)
 	}
@@ -201,7 +216,7 @@ func (svc *service) FetchJobStatusMap(ctx context.Context, jobIDs []string) (map
 				svc.logger.ErrorContext(ctx, "failed to create request", slog.Any("error", err))
 				return
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := svc.httpClient.Do(req)
 			if err != nil {
 				svc.logger.ErrorContext(ctx, "failed to call mediary API", slog.Any("error", err))
 				return

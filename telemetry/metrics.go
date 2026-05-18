@@ -14,19 +14,19 @@ const meterName = "tg-podcastotron"
 // Metrics holds all metric instruments for the application.
 type Metrics struct {
 	// Episode metrics
-	EpisodeCreated         metric.Int64Counter
-	EpisodeProcessingTime  metric.Float64Histogram
-	EpisodeDeleted         metric.Int64Counter
-	EpisodePublished       metric.Int64Counter
+	EpisodeCreated        metric.Int64Counter
+	EpisodeProcessingTime metric.Float64Histogram
+	EpisodeDeleted        metric.Int64Counter
+	EpisodePublished      metric.Int64Counter
 
 	// Job metrics
-	JobEnqueued        metric.Int64Counter
-	JobProcessed       metric.Int64Counter
-	JobErrors          metric.Int64Counter
-	JobProcessingTime  metric.Float64Histogram
+	JobEnqueued       metric.Int64Counter
+	JobProcessed      metric.Int64Counter
+	JobErrors         metric.Int64Counter
+	JobProcessingTime metric.Float64Histogram
 
 	// Feed metrics
-	FeedRegenerated    metric.Int64Counter
+	FeedRegenerated metric.Int64Counter
 }
 
 // NewMetrics creates and registers all metric instruments.

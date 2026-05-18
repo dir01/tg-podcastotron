@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/signal"
 
+	"net/http"
+
 	"github.com/XSAM/otelsql"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -15,10 +17,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/joho/godotenv"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/redis/go-redis/extra/redisotel/v9"
 	"github.com/redis/go-redis/v9"
-	_ "github.com/mattn/go-sqlite3"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"tg-podcastotron/auth"
 	"tg-podcastotron/bot"
@@ -34,11 +37,15 @@ func main() {
 	defer cancel()
 
 	// region telemetry
+	serviceName := os.Getenv("OTEL_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "tg-podcastotron"
+	}
 	telemetryInstance, err := telemetry.Initialize(ctx, telemetry.Config{
-		ServiceName:    "tg-podcastotron",
-		ServiceVersion: "1.0.0",
+		ServiceName:    serviceName,
+		ServiceVersion: os.Getenv("OTEL_SERVICE_VERSION"),
 		Environment:    os.Getenv("ENVIRONMENT"),
-		OTLPEndpoint:   os.Getenv("OTEL_ENDPOINT"),
+		OTLPEndpoint:   os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		EnableStdout:   os.Getenv("ENVIRONMENT") != "production",
 	})
 	if err != nil {
@@ -151,7 +158,8 @@ func main() {
 	}
 	// endregion
 
-	mediaryService := mediary.New(mediaryURL, logger)
+	mediaryHTTPClient := &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
+	mediaryService := mediary.New(mediaryURL, mediaryHTTPClient, logger)
 
 	db, err := otelsql.Open("sqlite3", dbPath,
 		otelsql.WithAttributes(semconv.DBSystemSqlite),
