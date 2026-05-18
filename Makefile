@@ -34,14 +34,12 @@ build-image:  # Build the Docker image locally for the current platform
 	docker build -t tg-podcastotron:local .
 .PHONY: build-image
 
+BUILDX_BUILDER := tg-podcastotron-builder
+
 push-image:  # Build and push multi-platform image to ghcr.io (mirrors GHA)
 	docker buildx build \
-		--platform linux/amd64,linux/arm64 \
 		--push \
-		--tag $(IMAGE):$(shell git rev-parse --short HEAD) \
-		--tag $(IMAGE):latest \
-		--cache-from type=registry,ref=$(IMAGE):buildcache \
-		--cache-to type=registry,ref=$(IMAGE):buildcache,mode=max \
+		--tag $(IMAGE):sha-$(shell git rev-parse --short HEAD) \
 		.
 .PHONY: push-image
 
