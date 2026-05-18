@@ -123,8 +123,7 @@ func initTracerProvider(ctx context.Context, cfg Config, res *resource.Resource)
 
 	if cfg.OTLPEndpoint != "" {
 		exporter, err := otlptracegrpc.New(ctx,
-			otlptracegrpc.WithEndpoint(cfg.OTLPEndpoint),
-			otlptracegrpc.WithInsecure(),
+			otlptracegrpc.WithEndpointURL(cfg.OTLPEndpoint),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
@@ -142,8 +141,7 @@ func initMeterProvider(ctx context.Context, cfg Config, res *resource.Resource) 
 
 	if cfg.OTLPEndpoint != "" {
 		exporter, err := otlpmetricgrpc.New(ctx,
-			otlpmetricgrpc.WithEndpoint(cfg.OTLPEndpoint),
-			otlpmetricgrpc.WithInsecure(),
+			otlpmetricgrpc.WithEndpointURL(cfg.OTLPEndpoint),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OTLP metric exporter: %w", err)
