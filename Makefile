@@ -27,9 +27,23 @@ generate:  # Generate code
 	go generate ./...
 .PHONY: generate
 
+REGISTRY := ghcr.io
+IMAGE := $(REGISTRY)/dir01/tg-podcastotron
+
 build-image:  # Build the Docker image locally for the current platform
 	docker build -t tg-podcastotron:local .
 .PHONY: build-image
+
+push-image:  # Build and push multi-platform image to ghcr.io (mirrors GHA)
+	docker buildx build \
+		--platform linux/amd64,linux/arm64 \
+		--push \
+		--tag $(IMAGE):$(shell git rev-parse --short HEAD) \
+		--tag $(IMAGE):latest \
+		--cache-from type=registry,ref=$(IMAGE):buildcache \
+		--cache-to type=registry,ref=$(IMAGE):buildcache,mode=max \
+		.
+.PHONY: push-image
 
 docker-compose-up:  # Run required services (from docker-compose.yml)
 	docker-compose up -d
