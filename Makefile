@@ -55,9 +55,9 @@ new-migration: # Create a new migration
 .PHONY: new-migration
 
 migrate: # Migrate the database to the latest version
-	go tool sql-migrate up -config "${SQL_MIGRATE_CONFIG}" -env "${SQL_MIGRATE_ENV}"
+	sql-migrate up -config "${SQL_MIGRATE_CONFIG}" -env "${SQL_MIGRATE_ENV}"
 .PHONY: migrate
 
 migrate-down: # Rollback the database one version down
-	go tool sql-migrate down -config "${SQL_MIGRATE_CONFIG}" -env "${SQL_MIGRATE_ENV}"
+	sql-migrate down -config "${SQL_MIGRATE_CONFIG}" -env "${SQL_MIGRATE_ENV}"
 .PHONY: migrate-down
