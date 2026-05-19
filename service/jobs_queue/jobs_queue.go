@@ -80,7 +80,7 @@ func (r *RJQ) Publish(ctx context.Context, jobType string, payload any) error {
 func (r *RJQ) Subscribe(ctx context.Context, jobType string, f func(ctx context.Context, payloadBytes []byte) error) {
 	err := r.work2Worker.Register(jobType, func(job *work2.Job, opt *work2.DequeueOptions) error {
 		var envelope jobEnvelope
-		if err := json.Unmarshal(job.Payload, &envelope); err != nil {
+		if err := json.Unmarshal(job.Payload, &envelope); err != nil || len(envelope.Payload) == 0 {
 			// fall back to raw payload for jobs enqueued before this change
 			envelope = jobEnvelope{Payload: job.Payload}
 		}
