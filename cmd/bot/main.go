@@ -95,10 +95,6 @@ func main() {
 			os.Exit(1)
 		}
 		redisClient := redis.NewClient(opt)
-		if err := redisotel.InstrumentTracing(redisClient); err != nil {
-			logger.ErrorContext(ctx, "error instrumenting redis tracing", slog.Any("error", err))
-			os.Exit(1)
-		}
 		if err := redisotel.InstrumentMetrics(redisClient); err != nil {
 			logger.ErrorContext(ctx, "error instrumenting redis metrics", slog.Any("error", err))
 			os.Exit(1)
