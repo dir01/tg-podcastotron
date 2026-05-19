@@ -159,13 +159,13 @@ type EpisodeStatusChange struct {
 }
 
 func (svc *Service) Start(ctx context.Context) chan []EpisodeStatusChange {
-	svc.jobsQueue.Subscribe(ctx, queueEventCreateEpisodes, func(payload []byte) error {
+	svc.jobsQueue.Subscribe(ctx, queueEventCreateEpisodes, func(ctx context.Context, payload []byte) error {
 		return svc.onCreateEpisodesQueueEvent(ctx, payload)
 	})
-	svc.jobsQueue.Subscribe(ctx, queueEventPollEpisodesStatus, func(payload []byte) error {
+	svc.jobsQueue.Subscribe(ctx, queueEventPollEpisodesStatus, func(ctx context.Context, payload []byte) error {
 		return svc.onPollEpisodesQueueEvent(ctx, payload)
 	})
-	svc.jobsQueue.Subscribe(ctx, queueEventRegenerateFeed, func(payload []byte) error {
+	svc.jobsQueue.Subscribe(ctx, queueEventRegenerateFeed, func(ctx context.Context, payload []byte) error {
 		return svc.onRegenerateFeedQueueEvent(ctx, payload)
 	})
 	svc.jobsQueue.Run() // MUST be called after all subscriptions
