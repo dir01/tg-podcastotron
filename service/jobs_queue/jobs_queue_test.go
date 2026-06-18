@@ -16,6 +16,21 @@ import (
 
 var logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
+func TestCappedExponentialBackoff(t *testing.T) {
+	cases := map[uint16]time.Duration{
+		0:  1 * time.Second,
+		1:  2 * time.Second,
+		3:  8 * time.Second,
+		9:  5 * time.Minute, // capped
+		50: 5 * time.Minute, // capped, no overflow
+	}
+	for retry, want := range cases {
+		if got := cappedExponentialBackoff(retry); got != want {
+			t.Errorf("cappedExponentialBackoff(%d) = %v, want %v", retry, got, want)
+		}
+	}
+}
+
 func TestSQLJobsQueue(t *testing.T) {
 	t.Run("job is persisted", func(t *testing.T) {
 		// Publish before subscribe — job should still be delivered.

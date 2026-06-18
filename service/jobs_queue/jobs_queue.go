@@ -28,7 +28,12 @@ func New(db *sql.DB, concurrency int, logger *slog.Logger) (*SQLJobsQueue, error
 		sqlq.WithDefaultConcurrency(uint16(concurrency)), //nolint:gosec
 		sqlq.WithDefaultPollInterval(2*time.Second),
 		sqlq.WithDefaultJobTimeout(2*time.Hour),
-		sqlq.WithDefaultMaxRetries(3),
+		// Retry indefinitely: jobs that depend on mediary (create episodes,
+		// regenerate feed) must survive a multi-day mediary outage and resume
+		// once it recovers, rather than being dead-lettered and silently lost.
+		// This matches the behavior of the previous Redis-backed queue.
+		sqlq.WithDefaultMaxRetries(-1),
+		sqlq.WithDefaultBackoffFunc(cappedExponentialBackoff),
 	)
 	if err != nil {
 		return nil, err
@@ -37,6 +42,21 @@ func New(db *sql.DB, concurrency int, logger *slog.Logger) (*SQLJobsQueue, error
 	// so the tables exist before any Publish or Subscribe calls.
 	q.Run()
 	return &SQLJobsQueue{q: q, logger: logger}, nil
+}
+
+// cappedExponentialBackoff grows exponentially (1s, 2s, 4s, ...) but is capped so
+// that with infinite retries a long dependency outage keeps being retried on a
+// sane cadence instead of backing off to hours/days.
+func cappedExponentialBackoff(retryNum uint16) time.Duration {
+	const maxDelay = 5 * time.Minute
+	if retryNum >= 9 { // 2^9s = ~8.5m already exceeds the cap
+		return maxDelay
+	}
+	d := time.Duration(1<<retryNum) * time.Second
+	if d > maxDelay {
+		return maxDelay
+	}
+	return d
 }
 
 // Run is a no-op: schema is initialized in New(), and worker goroutines start in Subscribe().
