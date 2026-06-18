@@ -33,6 +33,19 @@ func NewUndercastBot(
 type Repository interface {
 	SetChatID(ctx context.Context, userID string, chatID int64) error
 	GetChatID(ctx context.Context, userID string) (int64, error)
+
+	// GetEpisodeMessage returns the tracked status-log message for an episode,
+	// or (nil, nil) if none has been recorded yet.
+	GetEpisodeMessage(ctx context.Context, userID, episodeID string) (*EpisodeMessage, error)
+	SaveEpisodeMessage(ctx context.Context, userID, episodeID string, msg *EpisodeMessage) error
+}
+
+// EpisodeMessage is the persisted reference to the single Telegram message that
+// holds an episode's status log, together with the JSON-encoded log entries.
+type EpisodeMessage struct {
+	ChatID    int64
+	MessageID int
+	Log       string
 }
 
 type UndercastBot struct {
