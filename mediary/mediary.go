@@ -34,6 +34,16 @@ type service struct {
 	httpClient *http.Client
 }
 
+const (
+	// metadataRequestTimeout bounds calls to the long-polling metadata endpoint.
+	// It is generous because mediary may legitimately hold the request while it
+	// resolves torrent/ytdl metadata, but it must be finite so a dead connection
+	// (e.g. mediary restarting) cannot hang a worker goroutine forever.
+	metadataRequestTimeout = 3 * time.Minute
+	// jobRequestTimeout bounds short request/response calls (create job, job status).
+	jobRequestTimeout = 30 * time.Second
+)
+
 type Metadata struct {
 	URL                   string    `json:"url"`
 	Name                  string    `json:"name"`
@@ -94,6 +104,9 @@ func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, erro
 	fullURL := fmt.Sprintf("%s/metadata/long-polling?url=%s", svc.baseURL, mediaURL)
 	svc.logger.DebugContext(ctx, "checking if URL is valid", slog.String("url", fullURL))
 
+	ctx, cancel := context.WithTimeout(ctx, metadataRequestTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create request: %w", err)
@@ -126,6 +139,9 @@ func (svc *service) FetchMetadataLongPolling(ctx context.Context, mediaURL strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, metadataRequestTimeout)
+	defer cancel()
 
 	reqBody := bytes.NewBufferString(string(bodyBytes))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, reqBody)
@@ -164,6 +180,9 @@ func (svc *service) CreateUploadJob(ctx context.Context, params *CreateUploadJob
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal payload: %w", err)
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, jobRequestTimeout)
+	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, bytes.NewReader(payload))
 	if err != nil {
@@ -209,6 +228,9 @@ func (svc *service) FetchJobStatusMap(ctx context.Context, jobIDs []string) (map
 		go func(jobID string) {
 			defer wg.Done()
 
+			ctx, cancel := context.WithTimeout(ctx, jobRequestTimeout)
+			defer cancel()
+
 			fullURL := fmt.Sprintf("%s/jobs/%s", svc.baseURL, jobID)
 			svc.logger.DebugContext(ctx, "fetching job status", slog.String("url", fullURL))
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
@@ -221,6 +243,14 @@ func (svc *service) FetchJobStatusMap(ctx context.Context, jobIDs []string) (map
 				svc.logger.ErrorContext(ctx, "failed to call mediary API", slog.Any("error", err))
 				return
 			}
+			defer resp.Body.Close() //nolint:errcheck
+
+			if resp.StatusCode != http.StatusOK {
+				svc.logger.ErrorContext(ctx, "mediary returned non-OK status fetching job status",
+					slog.String("job_id", jobID), slog.Int("status_code", resp.StatusCode))
+				return
+			}
+
 			var jobStatus JobStatus
 			if err := json.NewDecoder(resp.Body).Decode(&jobStatus); err != nil {
 				svc.logger.ErrorContext(ctx, "error decoding mediary response", slog.Any("error", err))
