@@ -29,8 +29,7 @@ type PollEpisodesStatusQueuePayload struct {
 	EpisodeIDs       []string
 	UserID           string
 	PollingStartedAt *time.Time
-	Delay            *time.Duration
-	PollAfter        *time.Time
+	Delay            *time.Duration // current delay; used to compute next delay for exponential backoff
 	RequeueCount     int
 }
 

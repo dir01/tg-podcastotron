@@ -2,105 +2,61 @@ package jobsqueue
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"log/slog"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-	work2 "github.com/taylorchu/work"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
-	"tg-podcastotron/telemetry"
+	"github.com/dir01/sqlq"
 )
 
-type jobEnvelope struct {
-	TraceContext map[string]string `json:"tc,omitempty"`
-	Payload      json.RawMessage   `json:"p"`
+// PublishOption is an alias for sqlq.PublishOption.
+type PublishOption = sqlq.PublishOption
+
+// WithDelay schedules a job to run after the given duration.
+func WithDelay(d time.Duration) PublishOption {
+	return sqlq.WithDelay(d)
 }
 
-type RJQ struct {
-	work2Queue  work2.RedisQueue
-	work2Worker *work2.Worker
-	namespace   string
-	concurrency int
-	logger      *slog.Logger
+// SQLJobsQueue wraps sqlq with a simpler Subscribe-style API.
+type SQLJobsQueue struct {
+	q      sqlq.JobsQueue
+	logger *slog.Logger
 }
 
-func NewRedisJobsQueue(redisClient *redis.Client, concurrency int, namespace string, logger *slog.Logger) (*RJQ, error) {
-	jobsQueue := &RJQ{
-		work2Queue: work2.NewRedisQueue(redisClient),
-		work2Worker: work2.NewWorker(&work2.WorkerOptions{
-			Namespace: namespace,
-			Queue:     work2.NewRedisQueue(redisClient),
-			ErrorFunc: func(err error) {
-				logger.ErrorContext(context.Background(), "failed to handle job", slog.Any("error", err))
-			},
-		}),
-		namespace:   namespace,
-		concurrency: concurrency,
-		logger:      logger,
-	}
-	return jobsQueue, nil
-}
-
-func (r *RJQ) Run() {
-	r.work2Worker.Start()
-}
-
-func (r *RJQ) Shutdown() {
-	r.work2Worker.Stop()
-}
-
-func (r *RJQ) Publish(ctx context.Context, jobType string, payload any) error {
-	payloadBytes, err := json.Marshal(payload)
+func New(db *sql.DB, concurrency int, logger *slog.Logger) (*SQLJobsQueue, error) {
+	q, err := sqlq.New(db, sqlq.DBTypeSQLite,
+		sqlq.WithDefaultConcurrency(uint16(concurrency)), //nolint:gosec
+		sqlq.WithDefaultPollInterval(2*time.Second),
+		sqlq.WithDefaultJobTimeout(2*time.Hour),
+		sqlq.WithDefaultMaxRetries(3),
+	)
 	if err != nil {
-		return telemetry.LogError(r.logger, ctx, err, "failed to marshal payload")
+		return nil, err
 	}
-
-	carrier := propagation.MapCarrier{}
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
-
-	envelope := jobEnvelope{
-		TraceContext: carrier,
-		Payload:      payloadBytes,
-	}
-
-	job := work2.NewJob()
-	if err := job.MarshalJSONPayload(envelope); err != nil {
-		return telemetry.LogError(r.logger, ctx, err, "failed to marshal envelope")
-	}
-
-	if err := r.work2Queue.Enqueue(job, &work2.EnqueueOptions{Namespace: r.namespace, QueueID: jobType}); err != nil {
-		return telemetry.LogError(r.logger, ctx, err, "failed to enqueue job")
-	}
-
-	return nil
+	// Run() initializes the schema (CREATE TABLE IF NOT EXISTS). Call it immediately
+	// so the tables exist before any Publish or Subscribe calls.
+	q.Run()
+	return &SQLJobsQueue{q: q, logger: logger}, nil
 }
 
-func (r *RJQ) Subscribe(ctx context.Context, jobType string, f func(ctx context.Context, payloadBytes []byte) error) {
-	err := r.work2Worker.Register(jobType, func(job *work2.Job, opt *work2.DequeueOptions) error {
-		var envelope jobEnvelope
-		if err := json.Unmarshal(job.Payload, &envelope); err != nil || len(envelope.Payload) == 0 {
-			// fall back to raw payload for jobs enqueued before this change
-			envelope = jobEnvelope{Payload: job.Payload}
-		}
+// Run is a no-op: schema is initialized in New(), and worker goroutines start in Subscribe().
+// It exists for API compatibility with callers that expect to call Run() after Subscribe().
+func (j *SQLJobsQueue) Run() {}
 
-		jobCtx := otel.GetTextMapPropagator().Extract(ctx, propagation.MapCarrier(envelope.TraceContext))
-		jobCtx, span := telemetry.StartSpan(jobCtx, "job:"+jobType)
-		defer span.End()
+func (j *SQLJobsQueue) Shutdown() { j.q.Shutdown() }
 
-		if err := f(jobCtx, envelope.Payload); err != nil {
-			r.logger.ErrorContext(jobCtx, "failed to handle job", slog.Any("error", err))
-			telemetry.RecordError(span, err)
-			return err
-		}
-		return nil
-	}, &work2.JobOptions{
-		MaxExecutionTime: 2 * time.Hour,
-		IdleWait:         2 * time.Second,
-		NumGoroutines:    int64(r.concurrency),
+func (j *SQLJobsQueue) Publish(ctx context.Context, jobType string, payload any, opts ...PublishOption) error {
+	return j.q.Publish(ctx, jobType, payload, opts...)
+}
+
+// Subscribe registers a handler for the given job type.
+// The handler receives the per-job context (with OTel trace propagated from publisher)
+// and the raw JSON payload bytes.
+func (j *SQLJobsQueue) Subscribe(ctx context.Context, jobType string, f func(ctx context.Context, payload []byte) error) {
+	err := j.q.Consume(ctx, jobType, func(ctx context.Context, _ *sql.Tx, payloadBytes []byte) error {
+		return f(ctx, payloadBytes)
 	})
 	if err != nil {
-		r.logger.ErrorContext(ctx, "failed to register job", slog.Any("error", err))
+		j.logger.ErrorContext(ctx, "failed to register consumer", slog.String("job_type", jobType), slog.Any("error", err))
 	}
 }
