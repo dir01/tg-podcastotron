@@ -120,7 +120,13 @@ func main() {
 	mediaryHTTPClient := &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	mediaryService := mediary.New(mediaryURL, mediaryHTTPClient, logger)
 
-	db, err := otelsql.Open("sqlite3", dbPath,
+	// WAL + a busy timeout let concurrent writers (the jobs queue workers and
+	// the publish path) wait for the write lock instead of failing immediately
+	// with "database is locked"; _txlock=immediate takes the write lock at BEGIN
+	// to avoid deferred-transaction upgrade deadlocks. WAL is also required by
+	// litestream replication.
+	dsn := "file:" + dbPath + "?_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate"
+	db, err := otelsql.Open("sqlite3", dsn,
 		otelsql.WithAttributes(semconv.DBSystemSqlite),
 	)
 	if err != nil {
