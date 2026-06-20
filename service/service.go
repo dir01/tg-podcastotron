@@ -55,7 +55,7 @@ type Service struct {
 	s3Store      S3Store
 	mediaSvc     mediary.Service
 	repository   Repository
-	jobsQueue    *jobsqueue.RJQ
+	jobsQueue    *jobsqueue.SQLJobsQueue
 	obfuscateIDs func(string) string
 	metrics      *telemetry.Metrics
 
@@ -130,7 +130,7 @@ func New(
 	mediaSvc mediary.Service,
 	repository Repository,
 	s3Store S3Store,
-	jobsQueue *jobsqueue.RJQ,
+	jobsQueue *jobsqueue.SQLJobsQueue,
 	defaultFeedTitle string,
 	obfuscateIDs func(string) string,
 	logger *slog.Logger,
@@ -795,20 +795,6 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	fields := []any{
 		slog.Any("episode_ids", payload.EpisodeIDs),
 		slog.String("user_id", payload.UserID),
-		slog.Any("poll_after", payload.PollAfter),
-	}
-
-	if payload.PollAfter != nil {
-		sleepDuration := time.Until(*payload.PollAfter)
-		if sleepDuration > 0 {
-			fields := append(fields, slog.Duration("sleep_duration", sleepDuration))
-			svc.logger.DebugContext(ctx, "sleeping before polling episodes", fields...)
-			select {
-			case <-time.After(sleepDuration):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
 	}
 
 	svc.logger.InfoContext(ctx, "polling episode status", fields...)
@@ -924,33 +910,29 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	}
 
 	if len(episodeIDsToRequeue) > 0 {
-		newPayload := &PollEpisodesStatusQueuePayload{
-			EpisodeIDs:       episodeIDsToRequeue,
-			UserID:           payload.UserID,
-			PollingStartedAt: payload.PollingStartedAt,
-			Delay:            payload.Delay,
-			PollAfter:        payload.PollAfter,
-			RequeueCount:     payload.RequeueCount + 1,
-		}
-
 		now := time.Now()
-		if newPayload.PollingStartedAt == nil {
-			newPayload.PollingStartedAt = &now
+		newPayload := &PollEpisodesStatusQueuePayload{
+			EpisodeIDs:   episodeIDsToRequeue,
+			UserID:       payload.UserID,
+			RequeueCount: payload.RequeueCount + 1,
 		}
-		if newPayload.Delay != nil {
-			newDelay := time.Duration(float64(*newPayload.Delay) * 1.1)
-			if newDelay > 60*time.Minute {
-				newDelay = 60 * time.Minute
-			}
-			newPayload.Delay = &newDelay
-		} else {
-			newDelay := 10 * time.Second
-			newPayload.Delay = &newDelay
-		}
-		pollAfter := now.Add(*newPayload.Delay)
-		newPayload.PollAfter = &pollAfter
 
-		if err := svc.jobsQueue.Publish(ctx, queueEventPollEpisodesStatus, newPayload); err != nil {
+		if payload.PollingStartedAt == nil {
+			newPayload.PollingStartedAt = &now
+		} else {
+			newPayload.PollingStartedAt = payload.PollingStartedAt
+		}
+
+		delay := 10 * time.Second
+		if payload.Delay != nil {
+			delay = time.Duration(float64(*payload.Delay) * 1.1)
+			if delay > 60*time.Minute {
+				delay = 60 * time.Minute
+			}
+		}
+		newPayload.Delay = &delay
+
+		if err := svc.jobsQueue.Publish(ctx, queueEventPollEpisodesStatus, newPayload, jobsqueue.WithDelay(delay)); err != nil {
 			fields := append(fields, slog.Any("episode_ids", episodeIDsToRequeue))
 			return telemetry.LogError(svc.logger, ctx, err, "failed to enqueue episode status polling", fields...)
 		}

@@ -14,8 +14,9 @@ Please note that it is intended strictly for legal content and is in no way inte
 ## What is needed to run this bot
 - [mediary](https://github.com/dir01/mediary) instance
 - S3 bucket (minio won't work out of the box, but PRs are welcome)
-- Redis instance (I've chosen to use Redis as default database solely because you can find a free Redis instance)
 - Telegram bot token
+
+Storage and background jobs are kept in a local SQLite database, so no external database is required.
 
 ## Configuration
 Bot is configured via environment variables, here is a table:
@@ -23,8 +24,7 @@ Bot is configured via environment variables, here is a table:
 | Variable                | Description                                                                                               |
 | ----------------------- |:--------------------------------------------------------------------------------------------------------- |
 | `MEDIARY_URL`           | Root endpoint of [mediary](https://github.com/dir01/mediary), my media downloader-encoder-uploader        |
-| `REDIS_URL`             | Full `redis://username:password@host:port/db` kind of URL. This redis will be used for storage             |
-| `REDIS_URL_BG_JOBS`     | Full `redis://username:password@host:port/db` kind of URL. This redis will be used for background jobs     |
+| `DB_PATH`               | Path to the SQLite database file (storage + background jobs). Optional, defaults to `./db/sqlite.db`       |
 | `BOT_TOKEN`             | Telegram bot token obtained from [@BotFather](https://t.me/BotFather)                                     |
 | `ADMIN_USERNAME`        | Telegram username of a person who will be considered admin. This person can grant access to another users |
 | `AWS_BUCKET_NAME`       | S3 bucket to store media files and actual podcast feeds                                                   |
@@ -35,7 +35,7 @@ Bot is configured via environment variables, here is a table:
 
 ## Running locally
 - `cp .env.example .env` and fill in missing values
-- `docker-compose up -d` to bring up Redis, [mediary](https://github.com/dir01/mediary) and fake s3 ([localstack](https://github.com/localstack/localstack)).
+- `docker-compose up -d` to bring up [mediary](https://github.com/dir01/mediary) (and its Redis) and fake s3 ([localstack](https://github.com/localstack/localstack)).
 *If you use Docker for Mac, it won't work, I recommend using [colima](https://github.com/abiosoft/colima)*
 - `make run` will run the bot
 

@@ -2,10 +2,13 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"html"
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -185,110 +188,205 @@ func (ub *UndercastBot) createEpisodes(ctx context.Context, userID string, chatI
 }
 
 func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStatusChanges []service.EpisodeStatusChange) {
-	userToStatusToChanges := make(map[string]map[service.EpisodeStatus][]service.EpisodeStatusChange)
+	// Preserve arrival order while grouping by user.
+	var userOrder []string
+	changesByUser := make(map[string][]service.EpisodeStatusChange)
 	for _, change := range episodeStatusChanges {
-		if _, exists := userToStatusToChanges[change.Episode.UserID]; !exists {
-			userToStatusToChanges[change.Episode.UserID] = make(map[service.EpisodeStatus][]service.EpisodeStatusChange)
+		userID := change.Episode.UserID
+		if _, exists := changesByUser[userID]; !exists {
+			userOrder = append(userOrder, userID)
 		}
-		userToStatusToChanges[change.Episode.UserID][change.NewStatus] = append(userToStatusToChanges[change.Episode.UserID][change.NewStatus], change)
+		changesByUser[userID] = append(changesByUser[userID], change)
 	}
 
-	for userID, statusToChangesMap := range userToStatusToChanges {
+	for _, userID := range userOrder {
+		userChanges := changesByUser[userID]
+
 		chatID, err := ub.repository.GetChatID(ctx, userID) // TODO: change to bulk get
 		if err != nil {
 			ub.handleError(ctx, 0, fmt.Errorf("failed to get chatID: %w", err))
-			return
+			continue
 		}
 
-		if createdMap, exists := statusToChangesMap[service.EpisodeStatusCreated]; exists && len(createdMap) > 0 {
-			delete(statusToChangesMap, service.EpisodeStatusCreated)
-			ub.handleEpisodesCreated(ctx, userID, chatID, createdMap)
+		defaultFeed, err := ub.service.DefaultFeed(ctx, userID)
+		if err != nil {
+			ub.logger.ErrorContext(ctx, "failed to get default feed", slog.Any("error", err))
 		}
 
-		var otherChanges []service.EpisodeStatusChange
-		for _, changes := range statusToChangesMap {
-			otherChanges = append(otherChanges, changes...)
+		// Newly created episodes are auto-published to the default feed (batched).
+		var createdEpIDs []string
+		for _, change := range userChanges {
+			if change.NewStatus == service.EpisodeStatusCreated {
+				createdEpIDs = append(createdEpIDs, change.Episode.ID)
+			}
 		}
-		if len(otherChanges) > 0 {
-			ub.notifyStatusChanged(ctx, userID, chatID, otherChanges)
+		if len(createdEpIDs) > 0 && defaultFeed != nil {
+			if err := ub.service.PublishEpisodes(ctx, userID, createdEpIDs, []string{defaultFeed.ID}); err != nil {
+				ub.logger.ErrorContext(ctx, "failed to publish created episodes to default feed", slog.Any("error", err))
+			}
+		}
+
+		// Each episode owns a single status-log message that we append to and edit in place.
+		for _, change := range userChanges {
+			ub.updateEpisodeLog(ctx, userID, chatID, change, defaultFeed)
 		}
 	}
 }
 
-func (ub *UndercastBot) handleEpisodesCreated(ctx context.Context, userID string, chatID int64, changes []service.EpisodeStatusChange) {
-	defaultFeed, err := ub.service.DefaultFeed(ctx, userID)
+type episodeLogEntry struct {
+	At     time.Time `json:"at"`
+	Status string    `json:"status"`
+}
+
+// updateEpisodeLog appends the latest status to the episode's log and reflects it
+// in a single Telegram message: it sends that message the first time and edits it
+// in place on every subsequent status change.
+func (ub *UndercastBot) updateEpisodeLog(
+	ctx context.Context,
+	userID string,
+	chatID int64,
+	change service.EpisodeStatusChange,
+	defaultFeed *service.Feed,
+) {
+	epID := change.Episode.ID
+
+	rec, err := ub.repository.GetEpisodeMessage(ctx, userID, epID)
 	if err != nil {
-		ub.handleError(ctx, chatID, fmt.Errorf("failed to get default feed: %w", err))
+		ub.logger.ErrorContext(ctx, "failed to load episode message", slog.String("episode_id", epID), slog.Any("error", err))
+		// fall through with rec == nil: we'll start a fresh message
 	}
 
-	epIDs := make([]string, 0, len(changes))
-	for _, statusChange := range changes {
-		epIDs = append(epIDs, statusChange.Episode.ID)
+	var entries []episodeLogEntry
+	if rec != nil && rec.Log != "" {
+		if err := json.Unmarshal([]byte(rec.Log), &entries); err != nil {
+			ub.logger.ErrorContext(ctx, "failed to unmarshal episode log", slog.String("episode_id", epID), slog.Any("error", err))
+			entries = nil
+		}
 	}
+	entries = append(entries, episodeLogEntry{At: time.Now().UTC(), Status: episodeStatusLabel(change.NewStatus)})
 
-	if err := ub.service.PublishEpisodes(ctx, userID, epIDs, []string{defaultFeed.ID}); err != nil {
-		ub.logger.ErrorContext(ctx, "handleEpisodesCreated failed to publish episodes", slog.Any("error", err))
+	var footerFeed *service.Feed
+	if change.NewStatus == service.EpisodeStatusComplete {
+		footerFeed = defaultFeed
 	}
+	text := renderEpisodeLog(change.Episode, entries, footerFeed)
 
-	message, err := formatEpisodesCreatedMessage(epIDs, defaultFeed)
+	logJSON, err := json.Marshal(entries)
 	if err != nil {
-		ub.logger.ErrorContext(ctx, "failed to format episodes created message", slog.Any("error", err))
-		message = "Accepted"
+		ub.logger.ErrorContext(ctx, "failed to marshal episode log", slog.String("episode_id", epID), slog.Any("error", err))
+		return
 	}
-	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        message,
-		ParseMode:   models.ParseModeHTML,
-		ReplyMarkup: nil,
+
+	messageID := 0
+	if rec != nil && rec.MessageID != 0 {
+		messageID = rec.MessageID
+		if _, err := ub.bot.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:             chatID,
+			MessageID:          rec.MessageID,
+			Text:               text,
+			ParseMode:          models.ParseModeHTML,
+			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
+		}); err != nil {
+			// The original message may have been deleted; start a new one.
+			ub.logger.WarnContext(ctx, "failed to edit episode message, sending a new one", slog.String("episode_id", epID), slog.Any("error", err))
+			messageID = ub.sendEpisodeLogMessage(ctx, chatID, text)
+		}
+	} else {
+		messageID = ub.sendEpisodeLogMessage(ctx, chatID, text)
+	}
+
+	if messageID == 0 {
+		return // send failed; nothing useful to persist
+	}
+
+	if err := ub.repository.SaveEpisodeMessage(ctx, userID, epID, &EpisodeMessage{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Log:       string(logJSON),
 	}); err != nil {
-		ub.logger.ErrorContext(ctx, "failed to send message",
-			slog.String("user_id", userID),
-			slog.Int64("chat_id", chatID),
-			slog.Any("error", err),
-		)
+		ub.logger.ErrorContext(ctx, "failed to save episode message", slog.String("episode_id", epID), slog.Any("error", err))
 	}
 }
 
-func (ub *UndercastBot) notifyStatusChanged(ctx context.Context, userID string, chatID int64, changes []service.EpisodeStatusChange) {
-	for _, change := range changes {
-		ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Episode #%s (%s) is now %s", change.Episode.ID, change.Episode.Title, change.NewStatus))
-	}
-}
-
-func formatEpisodesCreatedMessage(epIDs []string, defaultFeed *service.Feed) (string, error) {
-	if len(epIDs) == 0 {
-		return "", nil
-	}
-
-	if len(epIDs) == 1 {
-		return fmt.Sprintf(
-			`Episode creation scheduled.
-When it's ready, it will be published to default feed:
-
-<b>%s</b>
-<code>%s</code>
-
-To change the feed or name, send /ee_%s`,
-			defaultFeed.Title, defaultFeed.URL, epIDs[0],
-		), nil
-	}
-
-	episodeIDsStr, err := formatIDsCompactly(epIDs)
+func (ub *UndercastBot) sendEpisodeLogMessage(ctx context.Context, chatID int64, text string) int {
+	msg, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:             chatID,
+		Text:               text,
+		ParseMode:          models.ParseModeHTML,
+		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
+	})
 	if err != nil {
-		return "", fmt.Errorf("failed to format episode IDs: %w", err)
+		ub.logger.ErrorContext(ctx, "failed to send episode message", slog.Int64("chat_id", chatID), slog.Any("error", err))
+		return 0
+	}
+	return msg.ID
+}
+
+func episodeStatusLabel(status service.EpisodeStatus) string {
+	switch status {
+	case service.EpisodeStatusCreated:
+		return "added"
+	case service.EpisodeStatusPending:
+		return "queued"
+	case service.EpisodeStatusDownloading:
+		return "downloading"
+	case service.EpisodeStatusProcessing:
+		return "encoding"
+	case service.EpisodeStatusUploading:
+		return "uploading"
+	case service.EpisodeStatusComplete:
+		return "done ✅"
+	default:
+		return string(status)
+	}
+}
+
+// renderEpisodeLog builds the full status-log message. footerFeed, when non-nil,
+// adds a "published to" footer (used once the episode is complete).
+func renderEpisodeLog(ep *service.Episode, entries []episodeLogEntry, footerFeed *service.Feed) string {
+	title := ep.Title
+	if title == "" {
+		title = "Episode #" + ep.ID
 	}
 
-	strBits := []string{
-		fmt.Sprintf("%d episodes are scheduled.", len(epIDs)),
-		"When they are ready, they will be published to default feed:",
-		"",
-		fmt.Sprintf("<b>%s</b>", defaultFeed.Title),
-		fmt.Sprintf("<code>%s</code>", defaultFeed.URL),
-		"",
-		fmt.Sprintf("To change the feed or name, send /ee_%s", episodeIDsStr),
+	var b strings.Builder
+	b.WriteString("<b>")
+	b.WriteString(html.EscapeString(title))
+	b.WriteString("</b>\n")
+	if ep.SourceURL != "" {
+		b.WriteString("<code>")
+		b.WriteString(html.EscapeString(ep.SourceURL))
+		b.WriteString("</code>\n")
+	}
+	b.WriteString("\n")
+
+	var base time.Time
+	if len(entries) > 0 {
+		base = entries[0].At
+	}
+	for _, e := range entries {
+		b.WriteString(formatElapsed(e.At.Sub(base)))
+		b.WriteString(" — ")
+		b.WriteString(e.Status)
+		b.WriteString("\n")
 	}
 
-	return strings.Join(strBits, "\n"), nil
+	if footerFeed != nil {
+		b.WriteString("\nPublished to <b>")
+		b.WriteString(html.EscapeString(footerFeed.Title))
+		b.WriteString("</b>")
+	}
+	b.WriteString(fmt.Sprintf("\n\n/ee_%s to rename or change feed", ep.ID))
+
+	return b.String()
+}
+
+func formatElapsed(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d.Round(time.Second).Seconds())
+	return fmt.Sprintf("%02d:%02d:%02d", total/3600, (total%3600)/60, total%60)
 }
 
 func getNTopExtensions(selectedNodes []*treemultiselect.TreeNode, n int) []string {

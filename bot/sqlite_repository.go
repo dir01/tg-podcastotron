@@ -38,3 +38,32 @@ func (s *sqliteRepository) GetChatID(ctx context.Context, userID string) (int64,
 	}
 	return chatID, nil
 }
+
+func (s *sqliteRepository) GetEpisodeMessage(ctx context.Context, userID, episodeID string) (*EpisodeMessage, error) {
+	var row struct {
+		ChatID    int64  `db:"chat_id"`
+		MessageID int    `db:"message_id"`
+		Log       string `db:"log"`
+	}
+	if err := s.db.GetContext(ctx, &row,
+		"SELECT chat_id, message_id, log FROM episode_messages WHERE user_id = ? AND episode_id = ?",
+		userID, episodeID,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to select episode message: %w", err)
+	}
+	return &EpisodeMessage{ChatID: row.ChatID, MessageID: row.MessageID, Log: row.Log}, nil
+}
+
+func (s *sqliteRepository) SaveEpisodeMessage(ctx context.Context, userID, episodeID string, msg *EpisodeMessage) error {
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO episode_messages (user_id, episode_id, chat_id, message_id, log) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(user_id, episode_id) DO UPDATE SET chat_id = excluded.chat_id, message_id = excluded.message_id, log = excluded.log
+		`, userID, episodeID, msg.ChatID, msg.MessageID, msg.Log,
+	); err != nil {
+		return fmt.Errorf("failed to upsert episode message: %w", err)
+	}
+	return nil
+}
