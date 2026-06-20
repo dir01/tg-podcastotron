@@ -122,10 +122,18 @@ func main() {
 
 	// WAL + a busy timeout let concurrent writers (the jobs queue workers and
 	// the publish path) wait for the write lock instead of failing immediately
-	// with "database is locked"; _txlock=immediate takes the write lock at BEGIN
-	// to avoid deferred-transaction upgrade deadlocks. WAL is also required by
-	// litestream replication.
-	dsn := "file:" + dbPath + "?_journal_mode=WAL&_busy_timeout=5000&_txlock=immediate"
+	// with "database is locked". WAL is also required by litestream replication.
+	//
+	// We deliberately keep the default *deferred* transaction locking (no
+	// _txlock=immediate): sqlq runs each job handler inside a write transaction
+	// but writes nothing to it until the handler returns. With deferred locking
+	// that wrapping tx holds no write lock while the handler runs, so the
+	// handler's own repository writes and follow-up Publish calls (each on a
+	// separate pooled connection) can acquire the write lock. _txlock=immediate
+	// would grab the lock at BEGIN and self-deadlock the handler against its own
+	// queue transaction. Deferred is safe here because no handler holds a read
+	// lock that it later upgrades to a write within a single transaction.
+	dsn := "file:" + dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
 	db, err := otelsql.Open("sqlite3", dsn,
 		otelsql.WithAttributes(semconv.DBSystemSqlite),
 	)
