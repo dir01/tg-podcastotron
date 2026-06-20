@@ -1,0 +1,10 @@
+version: "2"
+
+linters:
+  settings:
+    govet:
+      disable:
+        # "inline" reports that generic stdlib calls (e.g. slices.Contains)
+        # can't be inlined ("type parameter inference is not yet supported").
+        # It's a performance hint, not a correctness check, and only noise here.
+        - inline

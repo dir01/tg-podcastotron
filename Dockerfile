@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache make gcc musl-dev
 
@@ -13,7 +13,7 @@ ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
 RUN make build
 RUN go build -o /build/bin/sql-migrate github.com/rubenv/sql-migrate/sql-migrate
 
-FROM alpine:3.21 AS app
+FROM alpine:3.24 AS app
 
 RUN apk add --no-cache make
 

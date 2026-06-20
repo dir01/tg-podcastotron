@@ -376,7 +376,7 @@ func renderEpisodeLog(ep *service.Episode, entries []episodeLogEntry, footerFeed
 		b.WriteString(html.EscapeString(footerFeed.Title))
 		b.WriteString("</b>")
 	}
-	b.WriteString(fmt.Sprintf("\n\n/ee_%s to rename or change feed", ep.ID))
+	fmt.Fprintf(&b, "\n\n/ee_%s to rename or change feed", ep.ID)
 
 	return b.String()
 }

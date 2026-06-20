@@ -16,7 +16,7 @@ run_all: # Run required services (from docker-compose.yml) and the bot
 .PHONY: run_all
 
 test:  # Run tests
-	go test -v ./...
+	CGO_ENABLED=1 go test -v ./...
 .PHONY: test
 
 lint:  # Run linter
