@@ -120,20 +120,26 @@ func longestCommonPrefixAndSuffix(strs []string) (longestPrefix string, longestS
 	first := strs[0]
 	last := strs[len(strs)-1]
 
-	for i := 0; i < len(first); i++ {
-		if string(last[i]) == string(first[i]) {
-			longestPrefix += string(last[i])
-		} else {
+	// last (lexicographically largest) may be shorter than first, so bound
+	// every index by the shorter of the two to avoid an out-of-range panic.
+	minLen := min(len(first), len(last))
+
+	for i := 0; i < minLen; i++ {
+		if first[i] != last[i] {
 			break
 		}
+		longestPrefix += string(first[i])
 	}
 
-	for i := len(first) - 1; i >= 0; i-- {
-		if string(last[i]) == string(first[i]) {
-			longestSuffix = string(last[i]) + longestSuffix
-		} else {
+	// Compare suffixes from each string's own end (not the same absolute
+	// index), so this stays correct when the strings differ in length.
+	for i := 0; i < minLen; i++ {
+		fc := first[len(first)-1-i]
+		lc := last[len(last)-1-i]
+		if fc != lc {
 			break
 		}
+		longestSuffix = string(fc) + longestSuffix
 	}
 
 	return longestPrefix, longestSuffix

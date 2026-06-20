@@ -49,6 +49,12 @@ func TestGenerateEpisodeTitle(t *testing.T) {
 			filepaths:     []string{},
 			expectedTitle: "",
 		},
+		{
+			// flat files where the lexicographically largest name is shorter
+			// than the smallest one used to panic with index out of range.
+			filepaths:     []string{"aaaa.mp3", "b.mp3"},
+			expectedTitle: "",
+		},
 	}
 	for _, test := range tests {
 		title := titleFromFilepaths(test.filepaths)
