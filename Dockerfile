@@ -1,17 +1,27 @@
+# syntax=docker/dockerfile:1
 FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache make gcc musl-dev
 
 WORKDIR /build
+
+ENV GOPATH="" \
+    GOCACHE=/root/.cache/go-build \
+    GOMODCACHE=/root/go/pkg/mod \
+    CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
+
 ADD go.mod go.sum ./
-ENV GOPATH=""
-RUN go mod download
+RUN --mount=type=cache,target=/root/go/pkg/mod \
+    go mod download
 
 ADD . .
 
-ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
-RUN make build
-RUN go build -o /build/bin/sql-migrate github.com/rubenv/sql-migrate/sql-migrate
+# Cache mounts keep the compiled Go build cache and module cache warm across
+# builds (and the two binaries share one layer).
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/root/go/pkg/mod \
+    make build && \
+    go build -o /build/bin/sql-migrate github.com/rubenv/sql-migrate/sql-migrate
 
 FROM alpine:3.24 AS app
 
