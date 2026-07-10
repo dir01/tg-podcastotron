@@ -8,9 +8,12 @@ import (
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	otellogglobal "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -30,6 +33,7 @@ type Config struct {
 type Telemetry struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *sdkmetric.MeterProvider
+	LoggerProvider *sdklog.LoggerProvider
 	Logger         *slog.Logger
 	Shutdown       func(context.Context) error
 }
@@ -63,6 +67,19 @@ func Initialize(ctx context.Context, cfg Config) (*Telemetry, error) {
 	}
 	otel.SetMeterProvider(meterProvider)
 
+	// Initialize logger provider (OTLP logs -> SigNoz). Without this the
+	// otelslog handler below writes to the global no-op provider and logs
+	// never leave the process.
+	loggerProvider, err := initLoggerProvider(ctx, cfg, res)
+	if err != nil {
+		_ = tracerProvider.Shutdown(ctx)
+		_ = meterProvider.Shutdown(ctx)
+		return nil, fmt.Errorf("failed to initialize logger provider: %w", err)
+	}
+	if loggerProvider != nil {
+		otellogglobal.SetLoggerProvider(loggerProvider)
+	}
+
 	// Set up propagators for distributed tracing
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
@@ -75,7 +92,11 @@ func Initialize(ctx context.Context, cfg Config) (*Telemetry, error) {
 		logLevel = slog.LevelDebug
 	}
 
-	handler := otelslog.NewHandler(cfg.ServiceName)
+	var handlerOpts []otelslog.Option
+	if loggerProvider != nil {
+		handlerOpts = append(handlerOpts, otelslog.WithLoggerProvider(loggerProvider))
+	}
+	handler := otelslog.NewHandler(cfg.ServiceName, handlerOpts...)
 	logger := slog.New(handler)
 	logger = logger.With(slog.String("service", cfg.ServiceName))
 	slog.SetDefault(logger)
@@ -104,12 +125,18 @@ func Initialize(ctx context.Context, cfg Config) (*Telemetry, error) {
 		if err := meterProvider.Shutdown(ctx); err != nil {
 			return fmt.Errorf("failed to shutdown meter provider: %w", err)
 		}
+		if loggerProvider != nil {
+			if err := loggerProvider.Shutdown(ctx); err != nil {
+				return fmt.Errorf("failed to shutdown logger provider: %w", err)
+			}
+		}
 		return nil
 	}
 
 	return &Telemetry{
 		TracerProvider: tracerProvider,
 		MeterProvider:  meterProvider,
+		LoggerProvider: loggerProvider,
 		Logger:         logger,
 		Shutdown:       shutdown,
 	}, nil
@@ -150,6 +177,24 @@ func initMeterProvider(ctx context.Context, cfg Config, res *resource.Resource) 
 	}
 
 	return sdkmetric.NewMeterProvider(opts...), nil
+}
+
+func initLoggerProvider(ctx context.Context, cfg Config, res *resource.Resource) (*sdklog.LoggerProvider, error) {
+	if cfg.OTLPEndpoint == "" {
+		return nil, nil
+	}
+
+	exporter, err := otlploggrpc.New(ctx,
+		otlploggrpc.WithEndpointURL(cfg.OTLPEndpoint),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OTLP log exporter: %w", err)
+	}
+
+	return sdklog.NewLoggerProvider(
+		sdklog.WithResource(res),
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
+	), nil
 }
 
 // multiHandler is a simple handler that writes to multiple handlers
