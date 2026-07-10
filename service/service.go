@@ -926,8 +926,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		delay := 10 * time.Second
 		if payload.Delay != nil {
 			delay = time.Duration(float64(*payload.Delay) * 1.1)
-			if delay > 60*time.Minute {
-				delay = 60 * time.Minute
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
 			}
 		}
 		newPayload.Delay = &delay
