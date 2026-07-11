@@ -13,9 +13,13 @@ jobs:
     name: Test
     uses: ./.github/workflows/do_test.yml
 
+  generate:
+    name: Generate
+    uses: ./.github/workflows/do_generate.yml
+
   image:
     name: Create and publish a Docker image
-    needs: [lint, test]
+    needs: [lint, test, generate]
     uses: ./.github/workflows/do_build_image.yml
     secrets:
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

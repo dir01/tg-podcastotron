@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-//go:generate moq -out mediarymocks/service.go -pkg mediarymocks -rm . Service:ServiceMock
+//go:generate go tool moq -out mediarymocks/service.go -pkg mediarymocks -rm . Service:ServiceMock
 type Service interface {
 	IsValidURL(ctx context.Context, mediaURL string) (bool, error)
 	FetchMetadataLongPolling(ctx context.Context, mediaURL string) (*Metadata, error)

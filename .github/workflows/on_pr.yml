@@ -12,3 +12,7 @@ jobs:
   test:
     name: Test
     uses: ./.github/workflows/do_test.yml
+
+  generate:
+    name: Generate
+    uses: ./.github/workflows/do_generate.yml

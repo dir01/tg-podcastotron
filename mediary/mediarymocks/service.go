@@ -19,6 +19,9 @@ var _ mediary.Service = &ServiceMock{}
 //
 //		// make and configure a mocked mediary.Service
 //		mockedService := &ServiceMock{
+//			CancelJobFunc: func(ctx context.Context, jobID string) error {
+//				panic("mock out the CancelJob method")
+//			},
 //			CreateUploadJobFunc: func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error) {
 //				panic("mock out the CreateUploadJob method")
 //			},

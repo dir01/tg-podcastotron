@@ -20,7 +20,7 @@ import (
 	"tg-podcastotron/telemetry"
 )
 
-//go:generate moq -out servicemocks/s3.go -pkg servicemocks -rm . S3Store:MockS3Store
+//go:generate go tool moq -out servicemocks/s3.go -pkg servicemocks -rm . S3Store:MockS3Store
 type S3Store interface {
 	PreSignedURL(key string) (string, error)
 	Put(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*PutOptions)) error
