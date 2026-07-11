@@ -38,6 +38,9 @@ var _ mediary.Service = &ServiceMock{}
 //
 //	}
 type ServiceMock struct {
+	// CancelJobFunc mocks the CancelJob method.
+	CancelJobFunc func(ctx context.Context, jobID string) error
+
 	// CreateUploadJobFunc mocks the CreateUploadJob method.
 	CreateUploadJobFunc func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error)
 
@@ -52,6 +55,13 @@ type ServiceMock struct {
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// CancelJob holds details about calls to the CancelJob method.
+		CancelJob []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// JobID is the jobID argument value.
+			JobID string
+		}
 		// CreateUploadJob holds details about calls to the CreateUploadJob method.
 		CreateUploadJob []struct {
 			// Ctx is the ctx argument value.
@@ -81,10 +91,47 @@ type ServiceMock struct {
 			MediaURL string
 		}
 	}
+	lockCancelJob                sync.RWMutex
 	lockCreateUploadJob          sync.RWMutex
 	lockFetchJobStatusMap        sync.RWMutex
 	lockFetchMetadataLongPolling sync.RWMutex
 	lockIsValidURL               sync.RWMutex
+}
+
+// CancelJob calls CancelJobFunc.
+func (mock *ServiceMock) CancelJob(ctx context.Context, jobID string) error {
+	if mock.CancelJobFunc == nil {
+		panic("ServiceMock.CancelJobFunc: method is nil but Service.CancelJob was just called")
+	}
+	callInfo := struct {
+		Ctx   context.Context
+		JobID string
+	}{
+		Ctx:   ctx,
+		JobID: jobID,
+	}
+	mock.lockCancelJob.Lock()
+	mock.calls.CancelJob = append(mock.calls.CancelJob, callInfo)
+	mock.lockCancelJob.Unlock()
+	return mock.CancelJobFunc(ctx, jobID)
+}
+
+// CancelJobCalls gets all the calls that were made to CancelJob.
+// Check the length with:
+//
+//	len(mockedService.CancelJobCalls())
+func (mock *ServiceMock) CancelJobCalls() []struct {
+	Ctx   context.Context
+	JobID string
+} {
+	var calls []struct {
+		Ctx   context.Context
+		JobID string
+	}
+	mock.lockCancelJob.RLock()
+	calls = mock.calls.CancelJob
+	mock.lockCancelJob.RUnlock()
+	return calls
 }
 
 // CreateUploadJob calls CreateUploadJobFunc.

@@ -323,7 +323,7 @@ func TestService(t *testing.T) {
 			t.Fatalf("error publishing episode1: %v", err)
 		}
 
-		ep2 := must(svc.CreateEpisode(ctx, userID, "some-media-url", []string{}, "concatenate"))(t)
+		ep2 := must(svc.CreateEpisode(ctx, userID, "some-other-media-url", []string{}, "concatenate"))(t)
 		if err = svc.PublishEpisodes(ctx, userID, []string{ep2.ID}, []string{feed.ID}); err != nil {
 			t.Fatalf("error publishing episode2: %v", err)
 		}
