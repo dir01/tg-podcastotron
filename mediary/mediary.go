@@ -12,12 +12,13 @@ import (
 	"time"
 )
 
-//go:generate moq -out mediarymocks/service.go -pkg mediarymocks -rm . Service:ServiceMock
+//go:generate go tool moq -out mediarymocks/service.go -pkg mediarymocks -rm . Service:ServiceMock
 type Service interface {
 	IsValidURL(ctx context.Context, mediaURL string) (bool, error)
 	FetchMetadataLongPolling(ctx context.Context, mediaURL string) (*Metadata, error)
 	CreateUploadJob(ctx context.Context, params *CreateUploadJobParams) (jobID string, err error)
 	FetchJobStatusMap(ctx context.Context, jobIDs []string) (map[string]*JobStatus, error)
+	CancelJob(ctx context.Context, jobID string) error
 }
 
 func New(mediaryURL string, httpClient *http.Client, logger *slog.Logger) Service {
@@ -97,6 +98,7 @@ const (
 	JobStatusProcessing  JobStatusName = "processing"
 	JobStatusUploading   JobStatusName = "uploading"
 	JobStatusComplete    JobStatusName = "complete"
+	JobStatusCancelled   JobStatusName = "cancelled"
 )
 
 func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, error) {
@@ -216,6 +218,30 @@ func (svc *service) CreateUploadJob(ctx context.Context, params *CreateUploadJob
 	}
 
 	return respBody.ID, nil
+}
+
+func (svc *service) CancelJob(ctx context.Context, jobID string) error {
+	ctx, cancel := context.WithTimeout(ctx, jobRequestTimeout)
+	defer cancel()
+
+	fullURL := fmt.Sprintf("%s/jobs/%s", svc.baseURL, jobID)
+	svc.logger.DebugContext(ctx, "cancelling job", slog.String("url", fullURL))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, fullURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := svc.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call mediary API: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	// A missing job is fine — it's already gone, which is the desired end state.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("mediary returned status code %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (svc *service) FetchJobStatusMap(ctx context.Context, jobIDs []string) (map[string]*JobStatus, error) {

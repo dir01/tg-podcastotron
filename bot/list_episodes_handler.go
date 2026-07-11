@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 
@@ -96,10 +97,19 @@ func (ub *UndercastBot) renderEpisodeFull(ep *service.Episode, feeds []*service.
 	var feedsDescriptionBits []string
 	for _, f := range feeds {
 		feedsDescriptionBits = append(feedsDescriptionBits, fmt.Sprintf(
-			"- <code>%s</code> (%s) [info: /f_%s] [edit: /ef_%s]", f.ID, f.Title, f.ID, f.ID,
+			"- <code>%s</code> (%s) [info: /f_%s] [edit: /ef_%s]", f.ID, html.EscapeString(f.Title), f.ID, f.ID,
 		))
 	}
 	feedsDescription := strings.Join(feedsDescriptionBits, "\n")
+
+	// A concatenated episode can carry hundreds of source files; the full list
+	// easily exceeds Telegram's 4096-char message limit, so cap it and note how
+	// many were hidden. Escape each path — filenames routinely contain & < >.
+	escapedFiles := make([]string, len(ep.SourceFilepaths))
+	for i, f := range ep.SourceFilepaths {
+		escapedFiles[i] = html.EscapeString(f)
+	}
+	filesBlock := truncateJoin(escapedFiles, ", ", 3000)
 
 	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b>
 
@@ -112,13 +122,38 @@ func (ub *UndercastBot) renderEpisodeFull(ep *service.Episode, feeds []*service.
 <b>Published to feeds:</b>
 %s`,
 		ep.ID,
-		ep.Title,
-		ep.SourceURL,
-		strings.Join(ep.SourceFilepaths, ", "),
+		html.EscapeString(ep.Title),
+		html.EscapeString(ep.SourceURL),
+		filesBlock,
 		feedsDescription,
 	)
 }
 
 func (ub *UndercastBot) renderEpisodeShort(ep *service.Episode) string {
-	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b> [info: /ep_%s] [edit: /ee_%s]`, ep.ID, ep.Title, ep.ID, ep.ID)
+	return fmt.Sprintf(`<b>Episode #<code>%s</code> (%s)</b> [info: /ep_%s] [edit: /ee_%s]`, ep.ID, html.EscapeString(ep.Title), ep.ID, ep.ID)
+}
+
+// truncateJoin joins items with sep, stopping before the result would exceed
+// maxLen bytes and appending a note about how many items were omitted. Byte
+// length is a safe over-estimate of Telegram's (UTF-16) character limit, so a
+// budget comfortably under 4096 keeps the whole message within bounds.
+func truncateJoin(items []string, sep string, maxLen int) string {
+	var b strings.Builder
+	shown := 0
+	for _, it := range items {
+		s := ""
+		if shown > 0 {
+			s = sep
+		}
+		if b.Len()+len(s)+len(it) > maxLen {
+			break
+		}
+		b.WriteString(s)
+		b.WriteString(it)
+		shown++
+	}
+	if shown < len(items) {
+		fmt.Fprintf(&b, "\n… and %d more file(s)", len(items)-shown)
+	}
+	return b.String()
 }

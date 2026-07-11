@@ -336,6 +336,8 @@ func episodeStatusLabel(status service.EpisodeStatus) string {
 		return "uploading"
 	case service.EpisodeStatusComplete:
 		return "done ✅"
+	case service.EpisodeStatusFailed:
+		return "failed ❌"
 	default:
 		return string(status)
 	}

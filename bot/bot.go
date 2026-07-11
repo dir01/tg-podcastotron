@@ -9,6 +9,7 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 	"tg-podcastotron/auth"
 	"tg-podcastotron/service"
 	"tg-podcastotron/telemetry"
@@ -138,6 +139,7 @@ func (ub *UndercastBot) pollExpiredEpisodes(
 
 func (ub *UndercastBot) handleError(ctx context.Context, chatID int64, err error) {
 	id := uuid.New().String()
+	telemetry.RecordError(trace.SpanFromContext(ctx), err)
 	ub.logger.ErrorContext(ctx, "error", slog.String("id", id), slog.Any("error", err))
 	ub.sendTextMessage(ctx, chatID, fmt.Sprintf("An error occurred while processing your request. Please try again later. \nError ID: %s", id))
 }

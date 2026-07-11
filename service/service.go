@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
@@ -19,7 +20,7 @@ import (
 	"tg-podcastotron/telemetry"
 )
 
-//go:generate moq -out servicemocks/s3.go -pkg servicemocks -rm . S3Store:MockS3Store
+//go:generate go tool moq -out servicemocks/s3.go -pkg servicemocks -rm . S3Store:MockS3Store
 type S3Store interface {
 	PreSignedURL(key string) (string, error)
 	Put(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*PutOptions)) error
@@ -93,6 +94,7 @@ const (
 	EpisodeStatusProcessing  EpisodeStatus = "processing"
 	EpisodeStatusUploading   EpisodeStatus = "uploading"
 	EpisodeStatusComplete    EpisodeStatus = "complete"
+	EpisodeStatusFailed      EpisodeStatus = "failed"
 )
 
 const DefaultFeedID = "1"
@@ -125,6 +127,11 @@ var (
 )
 
 const maxPollEpisodesRequeueCount = 100
+
+// maxPollingDuration bounds how long we keep polling a single episode's job
+// before giving up. Past this we cancel the mediary job and mark the episode
+// failed, so a stuck or never-completing job cannot be polled forever.
+const maxPollingDuration = 24 * time.Hour
 
 func New(
 	mediaSvc mediary.Service,
@@ -206,8 +213,21 @@ func (svc *Service) CreateEpisodesAsync(
 	return nil
 }
 
+// deterministicEpisodeFilename derives a stable S3 filename from the episode's
+// identity (user + source + variants + processing type). Using a stable name
+// instead of a random UUID makes the create path idempotent: a retry reuses the
+// same S3 object, and because the object key flows into the presigned upload URL
+// (and thus mediary's job id), retries converge on a single mediary job instead
+// of spawning a fresh download/convert/upload each time. Variant order is
+// significant (it is the concatenation order), so it is not sorted.
+func deterministicEpisodeFilename(userID, mediaURL string, variants []string, processingType ProcessingType) string {
+	parts := append([]string{userID, mediaURL, string(processingType)}, variants...)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:]) + ".mp3"
+}
+
 func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL string, variants []string, processingType ProcessingType) (*Episode, error) {
-	filename := uuid.New().String() + ".mp3" // TODO: implement more elaborate filename generation
+	filename := deterministicEpisodeFilename(userID, mediaURL, variants, processingType)
 	episodeKey := svc.constructS3EpisodeKey(userID, filename)
 
 	fields := []any{
@@ -806,7 +826,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 	mediaryIDs := make([]string, 0, len(episodesMap))
 	for _, e := range episodesMap {
-		if e.Status == EpisodeStatusComplete {
+		if e.Status == EpisodeStatusComplete || e.Status == EpisodeStatusFailed {
 			continue
 		}
 		if e.MediaryID == "" {
@@ -843,7 +863,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			return telemetry.LogError(svc.logger, ctx, err, "failed to convert job status to episode status", fields...)
 		}
 
-		if newStatus != EpisodeStatusComplete {
+		if newStatus != EpisodeStatusComplete && newStatus != EpisodeStatusFailed {
 			episodeIDsToRequeue = append(episodeIDsToRequeue, ep.ID)
 		}
 
@@ -910,6 +930,13 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	}
 
 	if len(episodeIDsToRequeue) > 0 {
+		// Give up once we've been polling a job for too long: cancel it in mediary
+		// and mark the episode failed, rather than polling forever.
+		if payload.PollingStartedAt != nil && time.Since(*payload.PollingStartedAt) > maxPollingDuration {
+			svc.failStuckEpisodes(ctx, payload.UserID, episodeIDsToRequeue, episodesMap)
+			return nil
+		}
+
 		now := time.Now()
 		newPayload := &PollEpisodesStatusQueuePayload{
 			EpisodeIDs:   episodeIDsToRequeue,
@@ -926,8 +953,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		delay := 10 * time.Second
 		if payload.Delay != nil {
 			delay = time.Duration(float64(*payload.Delay) * 1.1)
-			if delay > 60*time.Minute {
-				delay = 60 * time.Minute
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
 			}
 		}
 		newPayload.Delay = &delay
@@ -939,6 +966,41 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	}
 
 	return nil
+}
+
+// failStuckEpisodes is invoked when episodes have been polled past
+// maxPollingDuration without reaching a terminal state. It cancels the mediary
+// job (best effort) and marks each episode failed, emitting status changes so
+// the user is notified and the polling loop stops for these episodes.
+func (svc *Service) failStuckEpisodes(ctx context.Context, userID string, episodeIDs []string, episodesMap map[string]*Episode) {
+	changes := make([]EpisodeStatusChange, 0, len(episodeIDs))
+	for _, epID := range episodeIDs {
+		ep, ok := episodesMap[epID]
+		if !ok {
+			continue
+		}
+		fields := []any{slog.String("episode_id", ep.ID), slog.String("mediary_id", ep.MediaryID)}
+
+		if ep.MediaryID != "" {
+			if err := svc.mediaSvc.CancelJob(ctx, ep.MediaryID); err != nil {
+				svc.logger.WarnContext(ctx, "failed to cancel mediary job for timed-out episode", append(fields, slog.Any("error", err))...)
+			}
+		}
+
+		oldStatus := ep.Status
+		ep.Status = EpisodeStatusFailed
+		if _, err := svc.repository.SaveEpisode(ctx, ep); err != nil {
+			svc.logger.ErrorContext(ctx, "failed to save failed episode", append(fields, slog.Any("error", err))...)
+			continue
+		}
+		changes = append(changes, EpisodeStatusChange{Episode: ep, OldStatus: oldStatus, NewStatus: EpisodeStatusFailed})
+	}
+
+	if len(changes) > 0 {
+		svc.logger.WarnContext(ctx, "episodes marked failed after polling timeout",
+			slog.Any("episode_ids", episodeIDs), slog.Duration("max_polling_duration", maxPollingDuration))
+		svc.episodeStatusChangesChan <- changes
+	}
 }
 
 func (svc *Service) onRegenerateFeedQueueEvent(ctx context.Context, payloadBytes []byte) error {
@@ -1034,6 +1096,8 @@ func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, erro
 		return EpisodeStatusUploading, nil
 	case mediary.JobStatusComplete:
 		return EpisodeStatusComplete, nil
+	case mediary.JobStatusCancelled:
+		return EpisodeStatusFailed, nil
 	}
 	return "", fmt.Errorf("unknown job status: %s", string(status))
 }
