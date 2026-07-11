@@ -401,15 +401,13 @@ func (svc *Service) PublishEpisodes(ctx context.Context, userID string, episodeI
 		slog.String("user_id", userID),
 	}
 
-	changedFeedIDs := make([]string, 0, 10)
+	changedFeedsMap := make(map[string]struct{}, len(feedIDs))
 
 	if err := svc.repository.Transaction(ctx, func(ctx context.Context) error {
 		existing, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, episodeIDs)
 		if err != nil {
 			return telemetry.LogError(svc.logger, ctx, err, "failed to list publicationsToCreate by episode ids")
 		}
-
-		changedFeedsMap := make(map[string]struct{}, len(feedIDs))
 
 		publicationsToDelete := make([]string, 0, len(existing))
 
@@ -457,7 +455,7 @@ func (svc *Service) PublishEpisodes(ctx context.Context, userID string, episodeI
 
 	if err := svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
 		UserID:  userID,
-		FeedIDs: changedFeedIDs,
+		FeedIDs: maps.Keys(changedFeedsMap),
 	}); err != nil {
 		return telemetry.LogError(svc.logger, ctx, err, "failed to publish regenerate feed job", fields...)
 	}
@@ -532,8 +530,10 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 	}
 
 	publicationIDs := make([]string, 0, len(publications))
+	affectedFeedsMap := make(map[string]struct{})
 	for _, p := range publications {
 		publicationIDs = append(publicationIDs, p.ID)
+		affectedFeedsMap[p.FeedID] = struct{}{}
 	}
 
 	if err := svc.repository.DeletePublications(ctx, userID, publicationIDs); err != nil {
@@ -548,6 +548,15 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 
 	if err := svc.repository.DeleteEpisodes(ctx, userID, epIDs); err != nil {
 		return telemetry.LogError(svc.logger, ctx, err, "failed to delete episodes", fields...)
+	}
+
+	if len(affectedFeedsMap) > 0 {
+		if err := svc.jobsQueue.Publish(ctx, queueEventRegenerateFeed, RegenerateFeedQueuePayload{
+			UserID:  userID,
+			FeedIDs: maps.Keys(affectedFeedsMap),
+		}); err != nil {
+			return telemetry.LogError(svc.logger, ctx, err, "failed to publish regenerate feed job", fields...)
+		}
 	}
 
 	return nil
