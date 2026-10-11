@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
@@ -26,6 +28,14 @@ type S3Store interface {
 	Put(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*PutOptions)) error
 	Delete(ctx context.Context, key string) error
 	URL(key string) (url string, err error)
+	List(ctx context.Context, prefix string) ([]S3Object, error)
+	DeleteMany(ctx context.Context, keys []string) error
+}
+
+type S3Object struct {
+	Key          string
+	Size         int64
+	LastModified time.Time
 }
 
 type Repository interface {
@@ -43,6 +53,9 @@ type Repository interface {
 	GetEpisodesMap(ctx context.Context, userID string, episodeIDs []string) (map[string]*Episode, error)
 	DeleteEpisodes(ctx context.Context, userID string, episodeIDs []string) error
 	ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error)
+	GetEpisodeByCreationKey(ctx context.Context, userID, creationKey string) (*Episode, error)
+	ListEpisodesByStorageKeys(ctx context.Context, storageKeys []string) ([]*Episode, error)
+	ListAllEpisodes(ctx context.Context) ([]*Episode, error)
 
 	BulkInsertPublications(ctx context.Context, publications []*Publication) error
 	ListPublicationsByEpisodeIDs(ctx context.Context, userID string, episodeIDs []string) ([]*Publication, error)
@@ -82,6 +95,10 @@ type Episode struct {
 	Format          string
 	FeedIDs         []string
 	StorageKey      string
+	// CreationKey identifies the unit of work (create request + variant index) that
+	// created this episode, so that retrying that work finds this row instead of
+	// creating another one. Empty for episodes created before it was introduced.
+	CreationKey string
 }
 
 type EpisodeStatus string
@@ -128,6 +145,12 @@ var (
 
 const maxPollEpisodesRequeueCount = 100
 
+// maxStartUploadRetries bounds how often starting one episode's mediary job is
+// retried. With the queue's backoff capped at 5 minutes this is about 3 days,
+// enough to ride out a long mediary outage. After that the job is dead-lettered
+// and the episode is marked failed.
+const maxStartUploadRetries = 864
+
 // maxPollingDuration bounds how long we keep polling a single episode's job
 // before giving up. Past this we cancel the mediary job and mark the episode
 // failed, so a stuck or never-completing job cannot be polled forever.
@@ -169,6 +192,10 @@ func (svc *Service) Start(ctx context.Context) chan []EpisodeStatusChange {
 	svc.jobsQueue.Subscribe(ctx, queueEventCreateEpisodes, func(ctx context.Context, payload []byte) error {
 		return svc.onCreateEpisodesQueueEvent(ctx, payload)
 	})
+	svc.jobsQueue.Subscribe(ctx, queueEventStartEpisodeUpload, svc.onStartEpisodeUploadQueueEvent,
+		jobsqueue.WithMaxRetries(maxStartUploadRetries),
+		jobsqueue.WithOnDeadLetter(svc.onStartEpisodeUploadDeadLetter),
+	)
 	svc.jobsQueue.Subscribe(ctx, queueEventPollEpisodesStatus, func(ctx context.Context, payload []byte) error {
 		return svc.onPollEpisodesQueueEvent(ctx, payload)
 	})
@@ -202,6 +229,7 @@ func (svc *Service) CreateEpisodesAsync(
 	svc.logger.InfoContext(ctx, "queueing episodes creation", fields...)
 
 	if err := svc.jobsQueue.Publish(ctx, queueEventCreateEpisodes, &CreateEpisodesQueuePayload{
+		RequestID:          uuid.NewString(),
 		URL:                url,
 		VariantsPerEpisode: variantsPerEpisode,
 		ProcessingType:     processingType,
@@ -213,33 +241,107 @@ func (svc *Service) CreateEpisodesAsync(
 	return nil
 }
 
-// deterministicEpisodeFilename derives a stable S3 filename from the episode's
-// identity (user + source + variants + processing type). Using a stable name
-// instead of a random UUID makes the create path idempotent: a retry reuses the
-// same S3 object, and because the object key flows into the presigned upload URL
-// (and thus mediary's job id), retries converge on a single mediary job instead
-// of spawning a fresh download/convert/upload each time. Variant order is
-// significant (it is the concatenation order), so it is not sorted.
-func deterministicEpisodeFilename(userID, mediaURL string, variants []string, processingType ProcessingType) string {
-	parts := append([]string{userID, mediaURL, string(processingType)}, variants...)
-	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+// episodeFilename derives an episode's S3 filename from its creation key. It is
+// stable across retries of the same unit of work, so a retry reuses the object (and,
+// since the key is part of the presigned upload URL, the mediary job) instead of
+// adding a new one. Separate requests for the same content get distinct files, so
+// deleting one episode never removes another episode's audio.
+func episodeFilename(userID, creationKey string) string {
+	sum := sha256.Sum256([]byte(userID + "\x00" + creationKey))
 	return hex.EncodeToString(sum[:]) + ".mp3"
 }
 
+// episodeCreationKey identifies the episode made from the variantIdx-th variant of a create request.
+func episodeCreationKey(requestID string, variantIdx int) string {
+	return fmt.Sprintf("%s/%d", requestID, variantIdx)
+}
+
+// torrentEpisodeTitle needs no metadata, so it is also an episode's placeholder
+// title until its upload is started and metadata is known.
+func torrentEpisodeTitle(mediaURL string, variants []string) string {
+	title := titleFromFilepaths(variants)
+	if title == "" {
+		return titleFromSourceURL(mediaURL)
+	}
+	return fmt.Sprintf("%s - %s", title, titleFromSourceURL(mediaURL))
+}
+
+// CreateEpisode persists a single episode and starts its upload synchronously.
 func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL string, variants []string, processingType ProcessingType) (*Episode, error) {
-	filename := deterministicEpisodeFilename(userID, mediaURL, variants, processingType)
-	episodeKey := svc.constructS3EpisodeKey(userID, filename)
+	ep, err := svc.ensureEpisode(ctx, userID, mediaURL, variants, uuid.NewString())
+	if err != nil {
+		return nil, err
+	}
+	return svc.startEpisodeUpload(ctx, ep, mediaURL, variants, processingType)
+}
+
+// ensureEpisode returns the episode created under creationKey, persisting it first if
+// it does not exist yet. The row, including its storage key, exists before any upload
+// to that key is started, so every object in S3 has an owning episode.
+func (svc *Service) ensureEpisode(ctx context.Context, userID, mediaURL string, variants []string, creationKey string) (*Episode, error) {
+	fields := []any{
+		slog.String("user_id", userID),
+		slog.String("media_url", mediaURL),
+		slog.String("creation_key", creationKey),
+	}
+
+	existing, err := svc.repository.GetEpisodeByCreationKey(ctx, userID, creationKey)
+	if err != nil {
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to look up episode by creation key", fields...)
+	}
+	if existing != nil {
+		return existing, nil
+	}
+
+	storageKey := svc.constructS3EpisodeKey(userID, episodeFilename(userID, creationKey))
+	url, err := svc.s3Store.URL(storageKey)
+	if err != nil {
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to get episode url", fields...)
+	}
+
+	epID, err := svc.repository.NextEpisodeID(ctx, userID)
+	if err != nil {
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to get next episode id", fields...)
+	}
+
+	now := time.Now().UTC()
+	ep, err := svc.repository.SaveEpisode(ctx, &Episode{
+		ID:              epID,
+		UserID:          userID,
+		Title:           torrentEpisodeTitle(mediaURL, variants),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		SourceURL:       mediaURL,
+		SourceFilepaths: variants,
+		URL:             url,
+		Status:          EpisodeStatusCreated,
+		Format:          "mp3", // FIXME: hardcoded
+		StorageKey:      storageKey,
+		CreationKey:     creationKey,
+	})
+	if err != nil {
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to save episode", fields...)
+	}
+	return ep, nil
+}
+
+// startEpisodeUpload starts the mediary job that produces ep's file, unless one was
+// already started for it: an episode never gets a second upload.
+func (svc *Service) startEpisodeUpload(ctx context.Context, ep *Episode, mediaURL string, variants []string, processingType ProcessingType) (*Episode, error) {
+	if ep.MediaryID != "" {
+		return ep, nil
+	}
 
 	fields := []any{
 		slog.String("media_url", mediaURL),
 		slog.Any("variants", variants),
 		slog.String("processing_type", string(processingType)),
-		slog.String("filename", filename),
-		slog.String("user_id", userID),
-		slog.String("episode_key", episodeKey),
+		slog.String("user_id", ep.UserID),
+		slog.String("episode_id", ep.ID),
+		slog.String("episode_key", ep.StorageKey),
 	}
 
-	presignURL, err := svc.s3Store.PreSignedURL(episodeKey)
+	presignURL, err := svc.s3Store.PreSignedURL(ep.StorageKey)
 	if err != nil {
 		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to get presigned url", fields...)
 	}
@@ -273,46 +375,26 @@ func (svc *Service) CreateEpisode(ctx context.Context, userID string, mediaURL s
 		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to fetch metadata", fields...)
 	}
 
-	mediaryID, err := svc.mediaSvc.CreateUploadJob(ctx, mediaryParams)
-	if err != nil {
-		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to create mediary job", fields...)
-	}
-
 	var episodeTitle string
 	switch metadata.DownloaderName {
 	case "torrent":
-		episodeTitle = titleFromFilepaths(variants)
-		if episodeTitle == "" {
-			episodeTitle = titleFromSourceURL(mediaURL)
-		} else {
-			episodeTitle = fmt.Sprintf("%s - %s", episodeTitle, titleFromSourceURL(mediaURL))
-		}
+		episodeTitle = torrentEpisodeTitle(mediaURL, variants)
 	case "ytdl":
 		episodeTitle = metadata.Name
 	default:
 		return nil, telemetry.LogError(svc.logger, ctx, ErrNotImplemented, "unsupported downloader while generating episode title", fields...)
 	}
 
-	epID, err := svc.repository.NextEpisodeID(ctx, userID)
+	mediaryID, err := svc.mediaSvc.CreateUploadJob(ctx, mediaryParams)
 	if err != nil {
-		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to get next episode id", fields...)
+		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to create mediary job", fields...)
 	}
 
-	ep := &Episode{
-		ID:              epID,
-		Title:           episodeTitle,
-		UserID:          userID,
-		SourceURL:       mediaURL,
-		CreatedAt:       time.Now().UTC(),
-		UpdatedAt:       time.Now().UTC(),
-		SourceFilepaths: variants,
-		StorageKey:      episodeKey,
-		URL:             stripQuery(presignURL),
-		MediaryID:       mediaryID,
-		Duration:        0,     // should be populated later when job is complete
-		FileLenBytes:    0,     // should be populated later when job is complete
-		Format:          "mp3", // FIXME: hardcoded
+	if ep.Title == torrentEpisodeTitle(mediaURL, variants) { // keep a title the user set in the meantime
+		ep.Title = episodeTitle
 	}
+	ep.MediaryID = mediaryID
+	ep.UpdatedAt = time.Now().UTC()
 
 	ep, err = svc.repository.SaveEpisode(ctx, ep)
 	if err != nil {
@@ -540,8 +622,22 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 		return telemetry.LogError(svc.logger, ctx, err, "failed to delete publications", fields...)
 	}
 
+	sharedKeys, err := svc.storageKeysUsedElsewhere(ctx, userID, epIDs, episodesMap)
+	if err != nil {
+		return telemetry.LogError(svc.logger, ctx, err, "failed to check whether episode files are shared", fields...)
+	}
+
 	for _, ep := range episodesMap {
-		if err := svc.s3Store.Delete(ctx, svc.extractEpisodeS3Key(ep)); err != nil {
+		key := svc.extractEpisodeS3Key(ep)
+		if key == "" {
+			continue
+		}
+		if sharedKeys[key] {
+			svc.logger.InfoContext(ctx, "keeping episode file still used by another episode",
+				slog.String("episode_id", ep.ID), slog.String("storage_key", key))
+			continue
+		}
+		if err := svc.s3Store.Delete(ctx, key); err != nil {
 			svc.logger.ErrorContext(ctx, "failed to delete episode file", slog.Any("error", err))
 		}
 	}
@@ -560,6 +656,33 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 	}
 
 	return nil
+}
+
+// storageKeysUsedElsewhere returns the storage keys of episodesMap that are also
+// referenced by episodes outside of the (userID, epIDs) set being deleted. Episodes
+// created between 2026-07-11 and the introduction of creation keys derived their
+// file from content, so two such episodes may share one file.
+func (svc *Service) storageKeysUsedElsewhere(ctx context.Context, userID string, epIDs []string, episodesMap map[string]*Episode) (map[string]bool, error) {
+	keys := make([]string, 0, len(episodesMap))
+	for _, ep := range episodesMap {
+		if ep.StorageKey != "" {
+			keys = append(keys, ep.StorageKey)
+		}
+	}
+
+	referencing, err := svc.repository.ListEpisodesByStorageKeys(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+
+	shared := make(map[string]bool)
+	for _, ep := range referencing {
+		if ep.UserID == userID && slices.Contains(epIDs, ep.ID) {
+			continue
+		}
+		shared[ep.StorageKey] = true
+	}
+	return shared, nil
 }
 
 func (svc *Service) GetFeed(ctx context.Context, userID string, feedID string) (*Feed, error) {
@@ -780,30 +903,45 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 
 	svc.logger.InfoContext(ctx, "creating queued episodes", fields...)
 
-	var createdEpisodes []*Episode
-	for _, variants := range payload.VariantsPerEpisode {
-		episode, err := svc.CreateEpisode(ctx, payload.UserID, payload.URL, variants, payload.ProcessingType)
-		if err != nil {
-			return telemetry.LogError(svc.logger, ctx, err, "failed to create single file episode", fields...)
+	requestID := payload.RequestID
+	if requestID == "" { // enqueued before RequestID existed; the payload is identical across retries
+		sum := sha256.Sum256(payloadBytes)
+		requestID = hex.EncodeToString(sum[:])
+	}
+
+	// Persist all of the request's episodes before starting any upload. A retry finds
+	// them by creation key instead of creating more, and each episode's upload is a
+	// separate job, so one failing variant neither blocks nor re-runs the others.
+	var episodes []*Episode
+	if err := svc.repository.Transaction(ctx, func(ctx context.Context) error {
+		episodes = episodes[:0]
+		for i, variants := range payload.VariantsPerEpisode {
+			ep, err := svc.ensureEpisode(ctx, payload.UserID, payload.URL, variants, episodeCreationKey(requestID, i))
+			if err != nil {
+				return err
+			}
+			episodes = append(episodes, ep)
 		}
-		createdEpisodes = append(createdEpisodes, episode)
-	}
-
-	episodeIDs := make([]string, len(createdEpisodes))
-	for i, e := range createdEpisodes {
-		episodeIDs[i] = e.ID
-	}
-
-	if err := svc.jobsQueue.Publish(ctx, queueEventPollEpisodesStatus, &PollEpisodesStatusQueuePayload{
-		EpisodeIDs: episodeIDs,
-		UserID:     payload.UserID,
+		return nil
 	}); err != nil {
-		fields := append(fields, slog.Any("episode_ids", episodeIDs), slog.Any("error", err))
-		svc.logger.ErrorContext(ctx, "failed to enqueue episode status polling", fields...)
+		return telemetry.LogError(svc.logger, ctx, err, "failed to persist queued episodes", fields...)
 	}
 
-	episodesStatusChanges := make([]EpisodeStatusChange, len(createdEpisodes))
-	for i, e := range createdEpisodes {
+	for i, ep := range episodes {
+		if err := svc.jobsQueue.Publish(ctx, queueEventStartEpisodeUpload, &StartEpisodeUploadQueuePayload{
+			UserID:         payload.UserID,
+			EpisodeID:      ep.ID,
+			URL:            payload.URL,
+			Variants:       payload.VariantsPerEpisode[i],
+			ProcessingType: payload.ProcessingType,
+		}); err != nil {
+			fields := append(fields, slog.String("episode_id", ep.ID))
+			return telemetry.LogError(svc.logger, ctx, err, "failed to enqueue episode upload", fields...)
+		}
+	}
+
+	episodesStatusChanges := make([]EpisodeStatusChange, len(episodes))
+	for i, e := range episodes {
 		episodesStatusChanges[i] = EpisodeStatusChange{
 			Episode:   e,
 			OldStatus: EpisodeStatusUndefined,
@@ -811,6 +949,94 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 		}
 	}
 	svc.episodeStatusChangesChan <- episodesStatusChanges
+
+	return nil
+}
+
+func (svc *Service) onStartEpisodeUploadQueueEvent(ctx context.Context, payloadBytes []byte) error {
+	var payload StartEpisodeUploadQueuePayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return telemetry.LogError(svc.logger, ctx, err, "failed to unmarshal payload", slog.String("payload", string(payloadBytes)))
+	}
+
+	fields := []any{
+		slog.String("user_id", payload.UserID),
+		slog.String("episode_id", payload.EpisodeID),
+	}
+	if info, ok := jobsqueue.JobInfoFromContext(ctx); ok {
+		fields = append(fields, slog.Int("retry_count", int(info.RetryCount)))
+	}
+
+	episodesMap, err := svc.repository.GetEpisodesMap(ctx, payload.UserID, []string{payload.EpisodeID})
+	if err != nil {
+		return telemetry.LogError(svc.logger, ctx, err, "failed to get episode", fields...)
+	}
+	ep, ok := episodesMap[payload.EpisodeID]
+	if !ok {
+		svc.logger.InfoContext(ctx, "episode no longer exists, not starting its upload", fields...)
+		return nil
+	}
+	if ep.Status == EpisodeStatusFailed {
+		return nil
+	}
+
+	if _, err := svc.startEpisodeUpload(ctx, ep, payload.URL, payload.Variants, payload.ProcessingType); err != nil {
+		return telemetry.LogError(svc.logger, ctx, err, "failed to start episode upload", fields...)
+	}
+
+	// Also reached when an earlier attempt started the upload but failed to enqueue
+	// polling; a rare duplicate poller is preferable to an episode never polled.
+	if err := svc.jobsQueue.Publish(ctx, queueEventPollEpisodesStatus, &PollEpisodesStatusQueuePayload{
+		EpisodeIDs: []string{ep.ID},
+		UserID:     payload.UserID,
+	}); err != nil {
+		return telemetry.LogError(svc.logger, ctx, err, "failed to enqueue episode status polling", fields...)
+	}
+
+	return nil
+}
+
+// onStartEpisodeUploadDeadLetter runs once an episode's upload could not be started
+// within maxStartUploadRetries: the episode is marked failed so the user is told.
+// It runs in the queue's dead-letter transaction, so the job only leaves the queue
+// once the episode is marked failed.
+func (svc *Service) onStartEpisodeUploadDeadLetter(ctx context.Context, tx *sql.Tx, info jobsqueue.JobInfo, payloadBytes []byte, handlerErr error) error {
+	var payload StartEpisodeUploadQueuePayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		// Retrying can't fix the payload: let the job be dead-lettered.
+		svc.logger.ErrorContext(ctx, "failed to unmarshal dead-lettered payload", slog.String("payload", string(payloadBytes)), slog.Any("error", err))
+		return nil
+	}
+
+	fields := []any{
+		slog.String("user_id", payload.UserID),
+		slog.String("episode_id", payload.EpisodeID),
+		slog.Int64("job_id", info.ID),
+		slog.Int("retry_count", int(info.RetryCount)),
+		slog.Any("error", handlerErr),
+	}
+	svc.logger.ErrorContext(ctx, "gave up starting episode upload", fields...)
+
+	txCtx := contextWithTx(ctx, tx)
+	episodesMap, err := svc.repository.GetEpisodesMap(txCtx, payload.UserID, []string{payload.EpisodeID})
+	if err != nil {
+		return telemetry.LogError(svc.logger, ctx, err, "failed to get dead-lettered episode", fields...)
+	}
+	ep, ok := episodesMap[payload.EpisodeID]
+	if !ok || ep.MediaryID != "" || ep.Status == EpisodeStatusFailed {
+		return nil // deleted, or started after all and owned by polling now
+	}
+
+	oldStatus := ep.Status
+	ep.Status = EpisodeStatusFailed
+	if _, err := svc.repository.SaveEpisode(txCtx, ep); err != nil {
+		return telemetry.LogError(svc.logger, ctx, err, "failed to save failed episode", fields...)
+	}
+
+	// Don't block on the bot while holding the queue's write lock. If the transaction
+	// is then rolled back, the hook runs again and the user may be told twice.
+	changes := []EpisodeStatusChange{{Episode: ep, OldStatus: oldStatus, NewStatus: EpisodeStatusFailed}}
+	go func() { svc.episodeStatusChangesChan <- changes }()
 
 	return nil
 }
@@ -942,7 +1168,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		// Give up once we've been polling a job for too long: cancel it in mediary
 		// and mark the episode failed, rather than polling forever.
 		if payload.PollingStartedAt != nil && time.Since(*payload.PollingStartedAt) > maxPollingDuration {
-			svc.failStuckEpisodes(ctx, payload.UserID, episodeIDsToRequeue, episodesMap)
+			svc.failEpisodes(ctx, episodeIDsToRequeue, episodesMap, "episodes marked failed after polling timeout")
 			return nil
 		}
 
@@ -977,11 +1203,11 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	return nil
 }
 
-// failStuckEpisodes is invoked when episodes have been polled past
-// maxPollingDuration without reaching a terminal state. It cancels the mediary
-// job (best effort) and marks each episode failed, emitting status changes so
-// the user is notified and the polling loop stops for these episodes.
-func (svc *Service) failStuckEpisodes(ctx context.Context, userID string, episodeIDs []string, episodesMap map[string]*Episode) {
+// failEpisodes is invoked when episodes cannot reach a terminal state: their
+// upload could not be started, or they were polled past maxPollingDuration. It
+// cancels the mediary job (best effort) and marks each episode failed, emitting
+// status changes so the user is notified and polling stops for these episodes.
+func (svc *Service) failEpisodes(ctx context.Context, episodeIDs []string, episodesMap map[string]*Episode, reason string) {
 	changes := make([]EpisodeStatusChange, 0, len(episodeIDs))
 	for _, epID := range episodeIDs {
 		ep, ok := episodesMap[epID]
@@ -992,7 +1218,7 @@ func (svc *Service) failStuckEpisodes(ctx context.Context, userID string, episod
 
 		if ep.MediaryID != "" {
 			if err := svc.mediaSvc.CancelJob(ctx, ep.MediaryID); err != nil {
-				svc.logger.WarnContext(ctx, "failed to cancel mediary job for timed-out episode", append(fields, slog.Any("error", err))...)
+				svc.logger.WarnContext(ctx, "failed to cancel mediary job for failed episode", append(fields, slog.Any("error", err))...)
 			}
 		}
 
@@ -1006,8 +1232,7 @@ func (svc *Service) failStuckEpisodes(ctx context.Context, userID string, episod
 	}
 
 	if len(changes) > 0 {
-		svc.logger.WarnContext(ctx, "episodes marked failed after polling timeout",
-			slog.Any("episode_ids", episodeIDs), slog.Duration("max_polling_duration", maxPollingDuration))
+		svc.logger.WarnContext(ctx, reason, slog.Any("episode_ids", episodeIDs))
 		svc.episodeStatusChangesChan <- changes
 	}
 }
@@ -1090,7 +1315,13 @@ func (svc *Service) extractEpisodeS3Key(ep *Episode) string {
 	// that were created before we started saving storage key
 	// TODO: remove this fallback after some time
 	userPrefix := svc.getUserKeyPrefix(ep.UserID)
-	return ep.URL[strings.Index(ep.URL, userPrefix):]
+	if idx := strings.Index(ep.URL, path.Join("episodes", userPrefix)+"/"); idx != -1 {
+		return ep.URL[idx:]
+	}
+	if idx := strings.Index(ep.URL, userPrefix); idx != -1 {
+		return ep.URL[idx:]
+	}
+	return ""
 }
 
 func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, error) {
