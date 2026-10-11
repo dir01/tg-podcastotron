@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/jmoiron/sqlx/reflectx"
 )
 
 func NewSqliteRepository(db *sql.DB) Repository {
@@ -41,6 +42,12 @@ func (r *sqliteRepository) Transaction(ctx context.Context, fn func(ctx context.
 	}
 
 	return nil
+}
+
+// contextWithTx makes repository calls made with the returned context run in tx,
+// a transaction owned by someone else (e.g. the jobs queue's dead-letter hook).
+func contextWithTx(ctx context.Context, tx *sql.Tx) context.Context {
+	return context.WithValue(ctx, "tx", &sqlx.Tx{Tx: tx, Mapper: reflectx.NewMapperFunc("db", sqlx.NameMapper)}) //nolint:staticcheck
 }
 
 func (r *sqliteRepository) dbFromContext(ctx context.Context) sqlx.ExtContext {
@@ -232,7 +239,8 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 				duration, 
 				file_len_bytes, 
 				format, 
-				storage_key
+				storage_key,
+				creation_key
 		) VALUES (
 				:id,
 				:user_id,
@@ -247,7 +255,8 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 				:duration,
 				:file_len_bytes,
 				:format,
-				:storage_key
+				:storage_key,
+				:creation_key
 	  	) ON CONFLICT (user_id, id) DO UPDATE SET
 				title = :title,
 				updated_at = :updated_at,
@@ -424,6 +433,57 @@ func (r *sqliteRepository) DeleteEpisodes(ctx context.Context, userID string, ep
 	}
 
 	return nil
+}
+
+// GetEpisodeByCreationKey returns the episode created by the given unit of work, or (nil, nil) if there is none.
+func (r *sqliteRepository) GetEpisodeByCreationKey(ctx context.Context, userID, creationKey string) (*Episode, error) {
+	var dbEp dbEpisode
+	if err := sqlx.GetContext(ctx, r.dbFromContext(ctx), &dbEp, `
+		SELECT * FROM episodes WHERE user_id = ? AND creation_key = ?`, userID, creationKey,
+	); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get episode by creation key: %w", err)
+	}
+	return dbEp.ToBusinessModel()
+}
+
+// ListEpisodesByStorageKeys returns episodes of any user whose storage_key is one of storageKeys.
+func (r *sqliteRepository) ListEpisodesByStorageKeys(ctx context.Context, storageKeys []string) ([]*Episode, error) {
+	if len(storageKeys) == 0 {
+		return []*Episode{}, nil
+	}
+	db := r.dbFromContext(ctx)
+	query, args, err := sqlx.In(`SELECT * FROM episodes WHERE storage_key IN (?)`, storageKeys)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IN query: %w", err)
+	}
+	var dbEpisodes []dbEpisode
+	if err := sqlx.SelectContext(ctx, db, &dbEpisodes, db.Rebind(query), args...); err != nil {
+		return nil, fmt.Errorf("failed to query episodes by storage keys: %w", err)
+	}
+	return toBusinessEpisodes(dbEpisodes)
+}
+
+// ListAllEpisodes returns episodes of all users.
+func (r *sqliteRepository) ListAllEpisodes(ctx context.Context) ([]*Episode, error) {
+	var dbEpisodes []dbEpisode
+	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &dbEpisodes, `SELECT * FROM episodes`); err != nil {
+		return nil, fmt.Errorf("failed to list all episodes: %w", err)
+	}
+	return toBusinessEpisodes(dbEpisodes)
+}
+
+func toBusinessEpisodes(dbEpisodes []dbEpisode) ([]*Episode, error) {
+	result := make([]*Episode, len(dbEpisodes))
+	for i, dbEp := range dbEpisodes {
+		ep, err := dbEp.ToBusinessModel()
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert to business model: %w", err)
+		}
+		result[i] = ep
+	}
+	return result, nil
 }
 
 func (r *sqliteRepository) ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error) {
@@ -625,20 +685,21 @@ func (r *sqliteRepository) toBusinessFeeds(dbFeeds []dbFeed) ([]*Feed, error) {
 // region dbEpisode
 
 type dbEpisode struct {
-	ID              string        `db:"id"`
-	UserID          string        `db:"user_id"`
-	Title           string        `db:"title"`
-	CreatedAt       string        `db:"created_at"`
-	UpdatedAt       string        `db:"updated_at"`
-	SourceURL       string        `db:"source_url"`
-	SourceFilepaths string        `db:"source_filepaths"`
-	MediaryID       string        `db:"mediary_id"`
-	URL             string        `db:"url"`
-	Status          string        `db:"status"`
-	Duration        time.Duration `db:"duration"`
-	FileLenBytes    int64         `db:"file_len_bytes"`
-	Format          string        `db:"format"`
-	StorageKey      string        `db:"storage_key"`
+	ID              string         `db:"id"`
+	UserID          string         `db:"user_id"`
+	Title           string         `db:"title"`
+	CreatedAt       string         `db:"created_at"`
+	UpdatedAt       string         `db:"updated_at"`
+	SourceURL       string         `db:"source_url"`
+	SourceFilepaths string         `db:"source_filepaths"`
+	MediaryID       string         `db:"mediary_id"`
+	URL             string         `db:"url"`
+	Status          string         `db:"status"`
+	Duration        time.Duration  `db:"duration"`
+	FileLenBytes    int64          `db:"file_len_bytes"`
+	Format          string         `db:"format"`
+	StorageKey      string         `db:"storage_key"`
+	CreationKey     sql.NullString `db:"creation_key"`
 }
 
 func (dbEpisode) FromBusinessModel(ep *Episode) (*dbEpisode, error) {
@@ -666,6 +727,7 @@ func (dbEpisode) FromBusinessModel(ep *Episode) (*dbEpisode, error) {
 		FileLenBytes:    ep.FileLenBytes,
 		Format:          ep.Format,
 		StorageKey:      ep.StorageKey,
+		CreationKey:     sql.NullString{String: ep.CreationKey, Valid: ep.CreationKey != ""},
 	}, nil
 }
 
@@ -700,6 +762,7 @@ func (d dbEpisode) ToBusinessModel() (*Episode, error) {
 		FileLenBytes:    d.FileLenBytes,
 		Format:          d.Format,
 		StorageKey:      d.StorageKey,
+		CreationKey:     d.CreationKey.String,
 	}, nil
 }
 

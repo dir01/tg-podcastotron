@@ -23,6 +23,12 @@ var _ service.S3Store = &MockS3Store{}
 //			DeleteFunc: func(ctx context.Context, key string) error {
 //				panic("mock out the Delete method")
 //			},
+//			DeleteManyFunc: func(ctx context.Context, keys []string) error {
+//				panic("mock out the DeleteMany method")
+//			},
+//			ListFunc: func(ctx context.Context, prefix string) ([]service.S3Object, error) {
+//				panic("mock out the List method")
+//			},
 //			PreSignedURLFunc: func(key string) (string, error) {
 //				panic("mock out the PreSignedURL method")
 //			},
@@ -42,6 +48,12 @@ type MockS3Store struct {
 	// DeleteFunc mocks the Delete method.
 	DeleteFunc func(ctx context.Context, key string) error
 
+	// DeleteManyFunc mocks the DeleteMany method.
+	DeleteManyFunc func(ctx context.Context, keys []string) error
+
+	// ListFunc mocks the List method.
+	ListFunc func(ctx context.Context, prefix string) ([]service.S3Object, error)
+
 	// PreSignedURLFunc mocks the PreSignedURL method.
 	PreSignedURLFunc func(key string) (string, error)
 
@@ -59,6 +71,20 @@ type MockS3Store struct {
 			Ctx context.Context
 			// Key is the key argument value.
 			Key string
+		}
+		// DeleteMany holds details about calls to the DeleteMany method.
+		DeleteMany []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Keys is the keys argument value.
+			Keys []string
+		}
+		// List holds details about calls to the List method.
+		List []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Prefix is the prefix argument value.
+			Prefix string
 		}
 		// PreSignedURL holds details about calls to the PreSignedURL method.
 		PreSignedURL []struct {
@@ -83,6 +109,8 @@ type MockS3Store struct {
 		}
 	}
 	lockDelete       sync.RWMutex
+	lockDeleteMany   sync.RWMutex
+	lockList         sync.RWMutex
 	lockPreSignedURL sync.RWMutex
 	lockPut          sync.RWMutex
 	lockURL          sync.RWMutex
@@ -121,6 +149,78 @@ func (mock *MockS3Store) DeleteCalls() []struct {
 	mock.lockDelete.RLock()
 	calls = mock.calls.Delete
 	mock.lockDelete.RUnlock()
+	return calls
+}
+
+// DeleteMany calls DeleteManyFunc.
+func (mock *MockS3Store) DeleteMany(ctx context.Context, keys []string) error {
+	if mock.DeleteManyFunc == nil {
+		panic("MockS3Store.DeleteManyFunc: method is nil but S3Store.DeleteMany was just called")
+	}
+	callInfo := struct {
+		Ctx  context.Context
+		Keys []string
+	}{
+		Ctx:  ctx,
+		Keys: keys,
+	}
+	mock.lockDeleteMany.Lock()
+	mock.calls.DeleteMany = append(mock.calls.DeleteMany, callInfo)
+	mock.lockDeleteMany.Unlock()
+	return mock.DeleteManyFunc(ctx, keys)
+}
+
+// DeleteManyCalls gets all the calls that were made to DeleteMany.
+// Check the length with:
+//
+//	len(mockedS3Store.DeleteManyCalls())
+func (mock *MockS3Store) DeleteManyCalls() []struct {
+	Ctx  context.Context
+	Keys []string
+} {
+	var calls []struct {
+		Ctx  context.Context
+		Keys []string
+	}
+	mock.lockDeleteMany.RLock()
+	calls = mock.calls.DeleteMany
+	mock.lockDeleteMany.RUnlock()
+	return calls
+}
+
+// List calls ListFunc.
+func (mock *MockS3Store) List(ctx context.Context, prefix string) ([]service.S3Object, error) {
+	if mock.ListFunc == nil {
+		panic("MockS3Store.ListFunc: method is nil but S3Store.List was just called")
+	}
+	callInfo := struct {
+		Ctx    context.Context
+		Prefix string
+	}{
+		Ctx:    ctx,
+		Prefix: prefix,
+	}
+	mock.lockList.Lock()
+	mock.calls.List = append(mock.calls.List, callInfo)
+	mock.lockList.Unlock()
+	return mock.ListFunc(ctx, prefix)
+}
+
+// ListCalls gets all the calls that were made to List.
+// Check the length with:
+//
+//	len(mockedS3Store.ListCalls())
+func (mock *MockS3Store) ListCalls() []struct {
+	Ctx    context.Context
+	Prefix string
+} {
+	var calls []struct {
+		Ctx    context.Context
+		Prefix string
+	}
+	mock.lockList.RLock()
+	calls = mock.calls.List
+	mock.lockList.RUnlock()
 	return calls
 }
 
