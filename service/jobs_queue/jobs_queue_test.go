@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"sync"
 	"testing"
@@ -160,4 +161,22 @@ func eventually(timeout time.Duration, f func() bool) bool {
 		}
 	}
 	return false
+}
+
+func TestPollDelay(t *testing.T) {
+	cases := map[uint16]struct{ low, high time.Duration }{
+		0:              {2 * time.Second, 2400 * time.Millisecond},
+		1:              {2200 * time.Millisecond, 2640 * time.Millisecond},
+		10:             {5187 * time.Millisecond, 6225 * time.Millisecond}, // 2s × 1.1^10 ≈ 5.19s
+		29:             {30 * time.Second, 36 * time.Second},               // 2s × 1.1^29 > 30s
+		math.MaxUint16: {30 * time.Second, 36 * time.Second},
+	}
+	for emptyPolls, want := range cases {
+		for range 100 {
+			got := pollDelay(emptyPolls)
+			if got < want.low || got >= want.high {
+				t.Fatalf("pollDelay(%d) = %v, want in [%v, %v)", emptyPolls, got, want.low, want.high)
+			}
+		}
+	}
 }

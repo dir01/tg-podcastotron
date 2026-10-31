@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"math"
+	"math/rand/v2"
 	"time"
 
 	"github.com/dir01/sqlq"
@@ -51,7 +53,7 @@ func New(db *sql.DB, concurrency int, logger *slog.Logger) (*SQLJobsQueue, error
 	q, err := sqlq.New(db, sqlq.DBTypeSQLite,
 		sqlq.WithLogger(logger),
 		sqlq.WithDefaultConcurrency(uint16(concurrency)), //nolint:gosec
-		sqlq.WithDefaultPollDelayFunc(func(uint16) time.Duration { return 2 * time.Second }),
+		sqlq.WithDefaultPollDelayFunc(pollDelay),
 		sqlq.WithDefaultJobTimeout(2*time.Hour),
 		// Retry indefinitely: jobs that depend on mediary (create episodes,
 		// regenerate feed) must survive a multi-day mediary outage and resume
@@ -70,6 +72,20 @@ func New(db *sql.DB, concurrency int, logger *slog.Logger) (*SQLJobsQueue, error
 		return nil, err
 	}
 	return &SQLJobsQueue{q: q, logger: logger}, nil
+}
+
+// pollDelay is 2s after a poll that found jobs. Each poll that finds no jobs makes
+// the delay 10% longer, to a maximum of 30s. Thus an idle consumer sends few queries.
+// The minimum is larger than the sqlq default (100ms), so that a busy queue does not
+// add many write transactions to SQLite. A random jitter of up to 20% is added,
+// so that idle consumers do not poll at the same time.
+func pollDelay(emptyPolls uint16) time.Duration {
+	const (
+		minDelay = 2 * time.Second
+		maxDelay = 30 * time.Second
+	)
+	delay := time.Duration(min(float64(minDelay)*math.Pow(1.1, float64(emptyPolls)), float64(maxDelay)))
+	return delay + rand.N(delay/5)
 }
 
 // cappedExponentialBackoff grows exponentially (1s, 2s, 4s, ...) but is capped so
