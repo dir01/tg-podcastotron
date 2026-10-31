@@ -30,7 +30,7 @@ func newGCTestService(t *testing.T, s3 *servicemocks.MockS3Store) (*service.Serv
 	}
 	queue := must(jobsqueue.New(db, 1, logger))(t)
 	t.Cleanup(queue.Shutdown)
-	repo := service.NewSqliteRepository(db)
+	repo := service.NewSqliteRepository(db, db)
 	return service.New(&mediarymocks.ServiceMock{}, repo, s3, queue, "", func(s string) string { return "p-" + s }, logger, nil), repo
 }
 

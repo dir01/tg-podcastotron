@@ -12,18 +12,25 @@ import (
 	"github.com/jmoiron/sqlx/reflectx"
 )
 
-func NewSqliteRepository(db *sql.DB) Repository {
-	return &sqliteRepository{db: sqlx.NewDb(db, "sqlite3")}
+// NewSqliteRepository makes a repository that runs single statements on db and
+// transactions on txDB. Open txDB with _txlock=immediate: a transaction that
+// reads and then writes cannot then fail with "database is locked" when another
+// connection commits between the read and the write. A deferred transaction in
+// WAL mode gets SQLITE_BUSY immediately in that case, and the busy timeout does
+// not apply. txDB can be db (e.g. in tests that have one connection only).
+func NewSqliteRepository(db *sql.DB, txDB *sql.DB) Repository {
+	return &sqliteRepository{db: sqlx.NewDb(db, "sqlite3"), txDB: sqlx.NewDb(txDB, "sqlite3")}
 }
 
 type sqliteRepository struct {
-	db *sqlx.DB
+	db   *sqlx.DB
+	txDB *sqlx.DB
 }
 
 // region transaction
 
 func (r *sqliteRepository) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
-	tx, err := r.db.Beginx()
+	tx, err := r.txDB.BeginTxx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)
 	}
@@ -563,7 +570,7 @@ func (r *sqliteRepository) BulkInsertPublications(ctx context.Context, publicati
 			VALUES (:user_id, :feed_id, :episode_id, :created_at)`,
 			dbP,
 		); err != nil {
-			return fmt.Errorf("failed to insert feed: %w", err)
+			return fmt.Errorf("failed to insert publication: %w", err)
 		}
 	}
 	return nil
