@@ -54,7 +54,7 @@ func newQueueBackedService(t *testing.T, mediarySvc mediary.Service) (*service.S
 			case <-ctx.Done():
 				return
 			case c := <-svcChan:
-				statusChanges <- c
+				statusChanges <- c.Changes
 			}
 		}
 	}()

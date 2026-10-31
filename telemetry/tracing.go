@@ -17,6 +17,17 @@ func StartSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (c
 	return tracer.Start(ctx, name, trace.WithAttributes(attrs...))
 }
 
+// StartLinkedRootSpan creates a span in a new trace, with a link to the span in ctx.
+// Use it for work that ctx causes, but that must not make the trace of ctx larger.
+func StartLinkedRootSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	tracer := otel.Tracer(tracerName)
+	return tracer.Start(ctx, name,
+		trace.WithNewRoot(),
+		trace.WithLinks(trace.LinkFromContext(ctx)),
+		trace.WithAttributes(attrs...),
+	)
+}
+
 // RecordError records an error on the span and sets the span status to error.
 func RecordError(span trace.Span, err error) {
 	if err != nil {

@@ -12,9 +12,12 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"tg-podcastotron/bot/ui/multiselect"
 	"tg-podcastotron/bot/ui/treemultiselect"
 	"tg-podcastotron/service"
+	"tg-podcastotron/telemetry"
 )
 
 func (ub *UndercastBot) urlHandler(ctx context.Context, _ *bot.Bot, update *models.Update) {
@@ -185,6 +188,17 @@ func (ub *UndercastBot) createEpisodes(ctx context.Context, userID string, chatI
 	if err := ub.service.CreateEpisodesAsync(ctx, userID, url, variants, processingType); err != nil {
 		ub.handleError(ctx, chatID, fmt.Errorf("failed to enqueue episodes creation: %w", err))
 	}
+}
+
+// handleEpisodesStatusChanges runs in the trace of the job that made the changes.
+// Without this, the logs of this handler have no trace_id.
+func (ub *UndercastBot) handleEpisodesStatusChanges(ctx context.Context, batch service.EpisodeStatusChanges) {
+	ctx = trace.ContextWithSpanContext(ctx, batch.SpanContext)
+	ctx, span := telemetry.StartSpan(ctx, "bot.episodes_status_changes",
+		attribute.Int("episodes.count", len(batch.Changes)))
+	defer span.End()
+
+	ub.onEpisodesStatusChanges(ctx, batch.Changes)
 }
 
 func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStatusChanges []service.EpisodeStatusChange) {
