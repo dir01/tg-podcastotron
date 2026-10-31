@@ -12,6 +12,30 @@ import (
 // PublishOption is an alias for sqlq.PublishOption.
 type PublishOption = sqlq.PublishOption
 
+// ConsumerOption is an alias for sqlq.ConsumerOption.
+type ConsumerOption = sqlq.ConsumerOption
+
+// JobInfo is an alias for sqlq.JobInfo.
+type JobInfo = sqlq.JobInfo
+
+// JobInfoFromContext returns information about the job being handled.
+func JobInfoFromContext(ctx context.Context) (JobInfo, bool) {
+	return sqlq.JobInfoFromContext(ctx)
+}
+
+// WithMaxRetries overrides the queue-wide unlimited retries for one job type.
+// Once exhausted, the job is moved to the dead letter queue.
+func WithMaxRetries(maxRetries int32) ConsumerOption {
+	return sqlq.WithConsumerMaxRetries(maxRetries)
+}
+
+// WithOnDeadLetter registers a hook that runs in the transaction that dead-letters a job of this type.
+// The hook must write only through tx (SQLite's write lock is held) and must not commit or roll it back.
+// Returning an error rolls the move back and reschedules the job like a failed attempt.
+func WithOnDeadLetter(hook func(ctx context.Context, tx *sql.Tx, info JobInfo, payload []byte, handlerErr error) error) ConsumerOption {
+	return sqlq.WithConsumerOnDeadLetter(hook)
+}
+
 // WithDelay schedules a job to run after the given duration.
 func WithDelay(d time.Duration) PublishOption {
 	return sqlq.WithDelay(d)
@@ -72,10 +96,10 @@ func (j *SQLJobsQueue) Publish(ctx context.Context, jobType string, payload any,
 // Subscribe registers a handler for the given job type.
 // The handler receives the per-job context (with OTel trace propagated from publisher)
 // and the raw JSON payload bytes.
-func (j *SQLJobsQueue) Subscribe(ctx context.Context, jobType string, f func(ctx context.Context, payload []byte) error) {
+func (j *SQLJobsQueue) Subscribe(ctx context.Context, jobType string, f func(ctx context.Context, payload []byte) error, opts ...ConsumerOption) {
 	err := j.q.Consume(ctx, jobType, func(ctx context.Context, _ *sql.Tx, payloadBytes []byte) error {
 		return f(ctx, payloadBytes)
-	})
+	}, opts...)
 	if err != nil {
 		j.logger.ErrorContext(ctx, "failed to register consumer", slog.String("job_type", jobType), slog.Any("error", err))
 	}
