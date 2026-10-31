@@ -169,3 +169,29 @@ func TestDeleteEpisodesKeepsSharedFile(t *testing.T) {
 		t.Fatalf("expected the file to be deleted with its last episode, deleted %v", deletedKeys)
 	}
 }
+
+// Legacy episodes can share one file: if it is missing, each complete episode is reported.
+func TestScanStorageGarbageReportsEveryEpisodeOfMissingSharedFile(t *testing.T) {
+	ctx := context.Background()
+	s3 := &servicemocks.MockS3Store{
+		ListFunc: func(ctx context.Context, prefix string) ([]service.S3Object, error) {
+			return []service.S3Object{{Key: "episodes/p-u1/other.mp3", Size: 1, LastModified: time.Now()}}, nil
+		},
+	}
+	svc, repo := newGCTestService(t, s3)
+
+	saveEpisode(t, repo, "u1", "1", "episodes/p-u1/shared.mp3", service.EpisodeStatusComplete)
+	saveEpisode(t, repo, "u1", "2", "episodes/p-u1/shared.mp3", service.EpisodeStatusComplete)
+	saveEpisode(t, repo, "u1", "3", "episodes/p-u1/shared.mp3", service.EpisodeStatusCreated)
+
+	report := must(svc.ScanStorageGarbage(ctx))(t)
+
+	var ids []string
+	for _, m := range report.Missing {
+		ids = append(ids, m.Episode.ID)
+	}
+	sort.Strings(ids)
+	if len(ids) != 2 || ids[0] != "1" || ids[1] != "2" {
+		t.Fatalf("expected episodes 1 and 2 to be reported missing, got %v", ids)
+	}
+}

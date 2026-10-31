@@ -65,11 +65,12 @@ func (svc *Service) ScanStorageGarbage(ctx context.Context) (*GCReport, error) {
 		return nil, telemetry.LogError(svc.logger, ctx, fmt.Errorf("no episodes in database, but %d episode files in storage", len(objects)), "gc: refusing to scan")
 	}
 
-	referenced := make(map[string]*Episode, len(episodes))
+	// Legacy content-keyed episodes can share one file, so a key can have many episodes.
+	referenced := make(map[string][]*Episode, len(episodes))
 	userByPrefix := make(map[string]string)
 	for _, ep := range episodes {
 		if key := svc.extractEpisodeS3Key(ep); key != "" {
-			referenced[key] = ep
+			referenced[key] = append(referenced[key], ep)
 		}
 		userByPrefix[svc.getUserKeyPrefix(ep.UserID)] = ep.UserID
 	}
@@ -85,7 +86,7 @@ func (svc *Service) ScanStorageGarbage(ctx context.Context) (*GCReport, error) {
 		report.ScannedBytes += obj.Size
 
 		keyPrefix, ok := collectableKeyPrefix(obj.Key)
-		if !ok || referenced[obj.Key] != nil || obj.LastModified.After(cutoff) {
+		if !ok || len(referenced[obj.Key]) > 0 || obj.LastModified.After(cutoff) {
 			continue
 		}
 
@@ -114,9 +115,14 @@ func (svc *Service) ScanStorageGarbage(ctx context.Context) (*GCReport, error) {
 	sort.Slice(report.Garbage, func(i, j int) bool { return report.Garbage[i].Key < report.Garbage[j].Key })
 
 	missingByUser := make(map[string][]*MissingEpisodeFile)
-	for key, ep := range referenced {
-		if ep.Status == EpisodeStatusComplete && !existing[key] {
-			missingByUser[ep.UserID] = append(missingByUser[ep.UserID], &MissingEpisodeFile{Episode: ep, StorageKey: key})
+	for key, eps := range referenced {
+		if existing[key] {
+			continue
+		}
+		for _, ep := range eps {
+			if ep.Status == EpisodeStatusComplete {
+				missingByUser[ep.UserID] = append(missingByUser[ep.UserID], &MissingEpisodeFile{Episode: ep, StorageKey: key})
+			}
 		}
 	}
 	for userID, missing := range missingByUser {

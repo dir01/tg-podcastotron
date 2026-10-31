@@ -248,3 +248,53 @@ func waitFor(ctx context.Context, t *testing.T, cond func() bool) {
 		}
 	}
 }
+
+// An episode deleted while its upload job is created must stay deleted, and the job
+// must be cancelled.
+func TestCreateEpisode_DeletedDuringUploadStartIsNotRecreated(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
+	userID := "user-1"
+	var repo service.Repository
+	var cancelledJobs []string
+	mediaryMock := &mediarymocks.ServiceMock{
+		FetchMetadataLongPollingFunc: func(ctx context.Context, mediaURL string) (*mediary.Metadata, error) {
+			return &mediary.Metadata{URL: mediaURL, DownloaderName: "torrent"}, nil
+		},
+		CreateUploadJobFunc: func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error) {
+			episodes, err := repo.ListUserEpisodes(ctx, userID)
+			if err != nil {
+				return "", err
+			}
+			for _, ep := range episodes {
+				if err := repo.DeleteEpisodes(ctx, userID, []string{ep.ID}); err != nil {
+					return "", err
+				}
+			}
+			return "job-1", nil
+		},
+		CancelJobFunc: func(ctx context.Context, jobID string) error {
+			cancelledJobs = append(cancelledJobs, jobID)
+			return nil
+		},
+	}
+
+	svc, r, _ := newQueueBackedService(t, mediaryMock)
+	repo = r
+
+	if _, err := svc.CreateEpisode(ctx, userID, "magnet:?xt=urn:btih:abc&dn=Book", []string{"ch1.mp3"}, service.ProcessingTypeConcatenate); err == nil {
+		t.Fatal("expected an error for an episode deleted during upload start")
+	}
+
+	episodes, err := repo.ListUserEpisodes(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(episodes) != 0 {
+		t.Fatalf("expected the deleted episode to stay deleted, got %d episodes", len(episodes))
+	}
+	if len(cancelledJobs) != 1 || cancelledJobs[0] != "job-1" {
+		t.Fatalf("expected job-1 to be cancelled, got %v", cancelledJobs)
+	}
+}

@@ -281,6 +281,30 @@ func (r *sqliteRepository) SaveEpisode(ctx context.Context, ep *Episode) (*Episo
 	return ep, nil
 }
 
+// SetEpisodeMediaryID records the upload job of an episode that has no upload job yet.
+// It replaces the title only if the title is still placeholderTitle. It does not create
+// the episode: it returns false if the episode does not exist or already has a job.
+func (r *sqliteRepository) SetEpisodeMediaryID(ctx context.Context, userID, episodeID, mediaryID, title, placeholderTitle string, updatedAt time.Time) (bool, error) {
+	res, err := r.dbFromContext(ctx).ExecContext(ctx, `
+		UPDATE episodes SET
+				mediary_id = ?,
+				title = CASE WHEN title = ? THEN ? ELSE title END,
+				updated_at = ?
+			WHERE user_id = ?
+			AND id = ?
+			AND COALESCE(mediary_id, '') = ''`,
+		mediaryID, placeholderTitle, title, timeToStr(updatedAt), userID, episodeID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to set episode mediary id: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get affected rows: %w", err)
+	}
+	return n > 0, nil
+}
+
 func (r *sqliteRepository) ListUserEpisodes(ctx context.Context, userID string) ([]*Episode, error) {
 	var dbEpisodes []dbEpisode
 	var epIDs []string

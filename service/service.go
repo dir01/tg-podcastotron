@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -48,6 +49,7 @@ type Repository interface {
 
 	NextEpisodeID(ctx context.Context, userID string) (epID string, err error)
 	SaveEpisode(ctx context.Context, episode *Episode) (*Episode, error)
+	SetEpisodeMediaryID(ctx context.Context, userID, episodeID, mediaryID, title, placeholderTitle string, updatedAt time.Time) (updated bool, err error)
 	ListUserEpisodes(ctx context.Context, userID string) ([]*Episode, error)
 	ListFeedEpisodes(ctx context.Context, userID, feedID string) ([]*Episode, error)
 	GetEpisodesMap(ctx context.Context, userID string, episodeIDs []string) (map[string]*Episode, error)
@@ -141,6 +143,8 @@ var (
 	ErrFeedNotFound    = fmt.Errorf("feed not found")
 	ErrEpisodeNotFound = fmt.Errorf("episode not found")
 	ErrNotImplemented  = fmt.Errorf("not implemented")
+
+	errEpisodeUploadNotRecorded = fmt.Errorf("episode was deleted or its upload was already started")
 )
 
 const maxPollEpisodesRequeueCount = 100
@@ -390,16 +394,29 @@ func (svc *Service) startEpisodeUpload(ctx context.Context, ep *Episode, mediaUR
 		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to create mediary job", fields...)
 	}
 
-	if ep.Title == torrentEpisodeTitle(mediaURL, variants) { // keep a title the user set in the meantime
-		ep.Title = episodeTitle
-	}
-	ep.MediaryID = mediaryID
-	ep.UpdatedAt = time.Now().UTC()
-
-	ep, err = svc.repository.SaveEpisode(ctx, ep)
+	// Do not use SaveEpisode here: it would create the episode again if the user
+	// deleted it while metadata was fetched or the job was created.
+	placeholderTitle := torrentEpisodeTitle(mediaURL, variants) // keep a title the user set in the meantime
+	now := time.Now().UTC()
+	updated, err := svc.repository.SetEpisodeMediaryID(ctx, ep.UserID, ep.ID, mediaryID, episodeTitle, placeholderTitle, now)
 	if err != nil {
 		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to save episode", fields...)
 	}
+	if !updated {
+		svc.logger.InfoContext(ctx, "episode was deleted or its upload was started by another worker, cancelling mediary job",
+			append(fields, slog.String("mediary_id", mediaryID))...)
+		if err := svc.mediaSvc.CancelJob(ctx, mediaryID); err != nil {
+			// gc removes the file the job uploads.
+			svc.logger.ErrorContext(ctx, "failed to cancel mediary job", append(fields, slog.String("mediary_id", mediaryID), slog.Any("error", err))...)
+		}
+		return nil, errEpisodeUploadNotRecorded
+	}
+
+	if ep.Title == placeholderTitle {
+		ep.Title = episodeTitle
+	}
+	ep.MediaryID = mediaryID
+	ep.UpdatedAt = now
 
 	return ep, nil
 }
@@ -980,7 +997,9 @@ func (svc *Service) onStartEpisodeUploadQueueEvent(ctx context.Context, payloadB
 		return nil
 	}
 
-	if _, err := svc.startEpisodeUpload(ctx, ep, payload.URL, payload.Variants, payload.ProcessingType); err != nil {
+	if _, err := svc.startEpisodeUpload(ctx, ep, payload.URL, payload.Variants, payload.ProcessingType); errors.Is(err, errEpisodeUploadNotRecorded) {
+		return nil // deleted, or polled by the worker that started its upload
+	} else if err != nil {
 		return telemetry.LogError(svc.logger, ctx, err, "failed to start episode upload", fields...)
 	}
 
