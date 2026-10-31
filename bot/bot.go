@@ -57,7 +57,7 @@ type UndercastBot struct {
 	service    *service.Service
 	repository Repository
 
-	episodesStatusChangesChan chan []service.EpisodeStatusChange
+	episodesStatusChangesChan chan service.EpisodeStatusChanges
 	gcScans                   gcPendingScans
 }
 
@@ -73,8 +73,8 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return
-			case statusChanges := <-ub.episodesStatusChangesChan:
-				ub.onEpisodesStatusChanges(ctx, statusChanges)
+			case batch := <-ub.episodesStatusChangesChan:
+				ub.handleEpisodesStatusChanges(ctx, batch)
 			}
 		}
 	}()

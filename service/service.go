@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/multierr"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
@@ -75,7 +77,7 @@ type Service struct {
 	obfuscateIDs func(string) string
 	metrics      *telemetry.Metrics
 
-	episodeStatusChangesChan chan []EpisodeStatusChange
+	episodeStatusChangesChan chan EpisodeStatusChanges
 	defaultFeedTitle         string
 }
 
@@ -179,7 +181,7 @@ func New(
 		mediaSvc:                 mediaSvc,
 		repository:               repository,
 		jobsQueue:                jobsQueue,
-		episodeStatusChangesChan: make(chan []EpisodeStatusChange, 1),
+		episodeStatusChangesChan: make(chan EpisodeStatusChanges, 1),
 		obfuscateIDs:             obfuscateIDs,
 		defaultFeedTitle:         defaultFeedTitle,
 		metrics:                  metrics,
@@ -192,7 +194,19 @@ type EpisodeStatusChange struct {
 	NewStatus EpisodeStatus
 }
 
-func (svc *Service) Start(ctx context.Context) chan []EpisodeStatusChange {
+// EpisodeStatusChanges is a batch of status changes from one job.
+type EpisodeStatusChanges struct {
+	// SpanContext identifies the span that made the changes. The receiver uses
+	// it as the parent of its span, so that its logs have the same trace_id.
+	SpanContext trace.SpanContext
+	Changes     []EpisodeStatusChange
+}
+
+func newEpisodeStatusChanges(ctx context.Context, changes []EpisodeStatusChange) EpisodeStatusChanges {
+	return EpisodeStatusChanges{SpanContext: trace.SpanContextFromContext(ctx), Changes: changes}
+}
+
+func (svc *Service) Start(ctx context.Context) chan EpisodeStatusChanges {
 	svc.jobsQueue.Subscribe(ctx, queueEventCreateEpisodes, func(ctx context.Context, payload []byte) error {
 		return svc.onCreateEpisodesQueueEvent(ctx, payload)
 	})
@@ -974,7 +988,7 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 			NewStatus: EpisodeStatusCreated,
 		}
 	}
-	svc.episodeStatusChangesChan <- episodesStatusChanges
+	svc.episodeStatusChangesChan <- newEpisodeStatusChanges(ctx, episodesStatusChanges)
 
 	return nil
 }
@@ -1064,7 +1078,8 @@ func (svc *Service) onStartEpisodeUploadDeadLetter(ctx context.Context, tx *sql.
 	// Don't block on the bot while holding the queue's write lock. If the transaction
 	// is then rolled back, the hook runs again and the user may be told twice.
 	changes := []EpisodeStatusChange{{Episode: ep, OldStatus: oldStatus, NewStatus: EpisodeStatusFailed}}
-	go func() { svc.episodeStatusChangesChan <- changes }()
+	batch := newEpisodeStatusChanges(ctx, changes)
+	go func() { svc.episodeStatusChangesChan <- batch }()
 
 	return nil
 }
@@ -1189,7 +1204,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	}
 
 	if len(episodesStateChanges) > 0 {
-		svc.episodeStatusChangesChan <- episodesStateChanges
+		svc.episodeStatusChangesChan <- newEpisodeStatusChanges(ctx, episodesStateChanges)
 	}
 
 	if len(episodeIDsToRequeue) > 0 {
@@ -1222,7 +1237,16 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		}
 		newPayload.Delay = &delay
 
-		if err := svc.jobsQueue.Publish(ctx, queueEventPollEpisodesStatus, newPayload, jobsqueue.WithDelay(delay)); err != nil {
+		// The next poll runs in a new trace with a link to this poll. If each poll
+		// was a child of the previous poll, a long upload would make one very large trace.
+		pubCtx, pubSpan := telemetry.StartLinkedRootSpan(ctx, "service.requeue_poll_episodes_status",
+			telemetry.AttrUserID(payload.UserID),
+			attribute.Int("poll.requeue_count", newPayload.RequeueCount),
+		)
+		err := svc.jobsQueue.Publish(pubCtx, queueEventPollEpisodesStatus, newPayload, jobsqueue.WithDelay(delay))
+		telemetry.RecordError(pubSpan, err)
+		pubSpan.End()
+		if err != nil {
 			fields := append(fields, slog.Any("episode_ids", episodeIDsToRequeue))
 			return telemetry.LogError(svc.logger, ctx, err, "failed to enqueue episode status polling", fields...)
 		}
@@ -1261,7 +1285,7 @@ func (svc *Service) failEpisodes(ctx context.Context, episodeIDs []string, episo
 
 	if len(changes) > 0 {
 		svc.logger.WarnContext(ctx, reason, slog.Any("episode_ids", episodeIDs))
-		svc.episodeStatusChangesChan <- changes
+		svc.episodeStatusChangesChan <- newEpisodeStatusChanges(ctx, changes)
 	}
 }
 
