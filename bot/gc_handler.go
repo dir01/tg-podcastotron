@@ -20,6 +20,12 @@ const (
 	gcConfirmTTL      = time.Hour
 	gcMaxListedOwners = 20
 	gcMaxListedMissed = 20
+	gcMaxListedFeeds  = 5
+	// gcReportMaxLen keeps the report below the 4096-character limit of a Telegram
+	// message. If the report is too long, the bot cannot send it with its buttons.
+	gcReportMaxLen = 3500
+	// gcListLineReserve is the space kept for the "…and N more" line of a list.
+	gcListLineReserve = 50
 )
 
 // gcPendingScans remembers scans awaiting the admin's confirmation, so that the
@@ -159,34 +165,39 @@ func renderGCReport(r *service.GCReport) string {
 		fmt.Fprintf(&sb, "<b>Garbage:</b> %d files, %s, not referenced by any episode and older than %s.\n",
 			len(r.Garbage), formatGiB(r.GarbageBytes), service.GCGracePeriod)
 		for i, o := range r.ByOwner {
-			if i == gcMaxListedOwners {
-				fmt.Fprintf(&sb, "…and %d more users\n", len(r.ByOwner)-i)
-				break
-			}
 			owner := "unknown user"
 			if o.UserID != "" {
 				owner = "user " + o.UserID
 			}
-			fmt.Fprintf(&sb, "• %s <code>%s…</code>: %d files, %s, %s → %s\n",
+			line := fmt.Sprintf("• %s <code>%s…</code>: %d files, %s, %s → %s\n",
 				html.EscapeString(owner), html.EscapeString(shorten(o.KeyPrefix, 8)), o.Count, formatGiB(o.Bytes),
 				o.Oldest.UTC().Format("2006-01-02"), o.Newest.UTC().Format("2006-01-02"))
+			// The owners list can use at most half of the report, so the missing files fit too.
+			if i == gcMaxListedOwners || sb.Len()+len(line) > gcReportMaxLen/2-gcListLineReserve {
+				fmt.Fprintf(&sb, "…and %d more users\n", len(r.ByOwner)-i)
+				break
+			}
+			sb.WriteString(line)
 		}
 	}
 
 	if len(r.Missing) > 0 {
 		fmt.Fprintf(&sb, "\n<b>Missing files</b> (reported only, not fixed): %d complete episodes have no file.\n", len(r.Missing))
 		for i, m := range r.Missing {
-			if i == gcMaxListedMissed {
+			feeds := "no feed"
+			if len(m.FeedIDs) > gcMaxListedFeeds {
+				feeds = fmt.Sprintf("feeds %s and %d more", strings.Join(m.FeedIDs[:gcMaxListedFeeds], ", "), len(m.FeedIDs)-gcMaxListedFeeds)
+			} else if len(m.FeedIDs) > 0 {
+				feeds = "feeds " + strings.Join(m.FeedIDs, ", ")
+			}
+			line := fmt.Sprintf("• user %s, episode #%s (%s): %s\n",
+				html.EscapeString(m.Episode.UserID), html.EscapeString(m.Episode.ID), html.EscapeString(feeds),
+				html.EscapeString(shorten(m.Episode.Title, 60)))
+			if i == gcMaxListedMissed || sb.Len()+len(line) > gcReportMaxLen-gcListLineReserve {
 				fmt.Fprintf(&sb, "…and %d more\n", len(r.Missing)-i)
 				break
 			}
-			feeds := "no feed"
-			if len(m.FeedIDs) > 0 {
-				feeds = "feeds " + strings.Join(m.FeedIDs, ", ")
-			}
-			fmt.Fprintf(&sb, "• user %s, episode #%s (%s): %s\n",
-				html.EscapeString(m.Episode.UserID), html.EscapeString(m.Episode.ID), feeds,
-				html.EscapeString(shorten(m.Episode.Title, 60)))
+			sb.WriteString(line)
 		}
 	}
 

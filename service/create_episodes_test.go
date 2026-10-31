@@ -298,3 +298,52 @@ func TestCreateEpisode_DeletedDuringUploadStartIsNotRecreated(t *testing.T) {
 		t.Fatalf("expected job-1 to be cancelled, got %v", cancelledJobs)
 	}
 }
+
+// Mediary returns the same job for the same request. If a duplicate worker records
+// that job first, the job is in use and must not be cancelled.
+func TestCreateEpisode_SameJobRecordedByAnotherWorkerIsNotCancelled(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
+	userID := "user-1"
+	var repo service.Repository
+	var cancelledJobs []string
+	mediaryMock := &mediarymocks.ServiceMock{
+		FetchMetadataLongPollingFunc: func(ctx context.Context, mediaURL string) (*mediary.Metadata, error) {
+			return &mediary.Metadata{URL: mediaURL, DownloaderName: "torrent"}, nil
+		},
+		CreateUploadJobFunc: func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error) {
+			// The other worker records the same job first.
+			episodes, err := repo.ListUserEpisodes(ctx, userID)
+			if err != nil {
+				return "", err
+			}
+			for _, ep := range episodes {
+				if _, err := repo.SetEpisodeMediaryID(ctx, userID, ep.ID, "job-1", ep.Title, ep.Title, time.Now().UTC()); err != nil {
+					return "", err
+				}
+			}
+			return "job-1", nil
+		},
+		CancelJobFunc: func(ctx context.Context, jobID string) error {
+			cancelledJobs = append(cancelledJobs, jobID)
+			return nil
+		},
+	}
+
+	svc, r, _ := newQueueBackedService(t, mediaryMock)
+	repo = r
+
+	_, _ = svc.CreateEpisode(ctx, userID, "magnet:?xt=urn:btih:abc&dn=Book", []string{"ch1.mp3"}, service.ProcessingTypeConcatenate)
+
+	if len(cancelledJobs) != 0 {
+		t.Fatalf("expected no job to be cancelled, got %v", cancelledJobs)
+	}
+	episodes, err := repo.ListUserEpisodes(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(episodes) != 1 || episodes[0].MediaryID != "job-1" {
+		t.Fatalf("expected one episode with job-1, got %+v", episodes)
+	}
+}

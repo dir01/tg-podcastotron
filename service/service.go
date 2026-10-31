@@ -403,11 +403,20 @@ func (svc *Service) startEpisodeUpload(ctx context.Context, ep *Episode, mediaUR
 		return nil, telemetry.LogError(svc.logger, ctx, err, "failed to save episode", fields...)
 	}
 	if !updated {
-		svc.logger.InfoContext(ctx, "episode was deleted or its upload was started by another worker, cancelling mediary job",
-			append(fields, slog.String("mediary_id", mediaryID))...)
+		fields = append(fields, slog.String("mediary_id", mediaryID))
+		// Another worker can get the same job from mediary and record it first:
+		// that job is in use, so do not cancel it.
+		current, err := svc.repository.GetEpisodesMap(ctx, ep.UserID, []string{ep.ID})
+		if err != nil {
+			return nil, telemetry.LogError(svc.logger, ctx, err, "failed to reload episode", fields...)
+		}
+		if cur, ok := current[ep.ID]; ok && cur.MediaryID == mediaryID {
+			return nil, errEpisodeUploadNotRecorded
+		}
+		svc.logger.InfoContext(ctx, "episode was deleted or its upload was started by another worker, cancelling mediary job", fields...)
 		if err := svc.mediaSvc.CancelJob(ctx, mediaryID); err != nil {
 			// gc removes the file the job uploads.
-			svc.logger.ErrorContext(ctx, "failed to cancel mediary job", append(fields, slog.String("mediary_id", mediaryID), slog.Any("error", err))...)
+			svc.logger.ErrorContext(ctx, "failed to cancel mediary job", append(fields, slog.Any("error", err))...)
 		}
 		return nil, errEpisodeUploadNotRecorded
 	}
