@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -393,7 +394,7 @@ func getRepo(t *testing.T) Repository {
 		t.Fatal(err)
 	}
 
-	repo := NewSqliteRepository(db)
+	repo := NewSqliteRepository(db, db)
 
 	migrations := &migrate.FileMigrationSource{
 		Dir: "../db/migrations",
@@ -404,4 +405,45 @@ func getRepo(t *testing.T) Repository {
 	}
 
 	return repo
+}
+
+// TestSqliteRepository__TransactionWaitsForConcurrentWriter checks that a
+// transaction that reads and then writes does not fail with "database is locked"
+// when another connection writes between the read and the write.
+func TestSqliteRepository__TransactionWaitsForConcurrentWriter(t *testing.T) {
+	dsn := "file:" + filepath.Join(t.TempDir(), "test.db") + "?_journal_mode=WAL&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	txDB, err := sql.Open("sqlite3", dsn+"&_txlock=immediate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = txDB.Close() })
+	if _, err := migrate.Exec(db, "sqlite3", &migrate.FileMigrationSource{Dir: "../db/migrations"}, migrate.Up); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewSqliteRepository(db, txDB)
+	ctx := context.Background()
+
+	writerErr := make(chan error, 1)
+	err = repo.Transaction(ctx, func(ctx context.Context) error {
+		if _, err := repo.ListPublicationsByEpisodeIDs(ctx, "user1", []string{"1"}); err != nil {
+			return err
+		}
+		go func() {
+			_, err := db.ExecContext(ctx, `INSERT INTO local_ids (user_id, episode_id, feed_id) VALUES ('user2', 1, 0)`)
+			writerErr <- err
+		}()
+		time.Sleep(200 * time.Millisecond) // let the other writer commit, if it can
+		return repo.BulkInsertPublications(ctx, []*Publication{{UserID: "user1", FeedID: "1", EpisodeID: "1", CreatedAt: time.Now()}})
+	})
+	if err != nil {
+		t.Fatalf("transaction failed: %v", err)
+	}
+	if err := <-writerErr; err != nil {
+		t.Fatalf("concurrent writer failed: %v", err)
+	}
 }

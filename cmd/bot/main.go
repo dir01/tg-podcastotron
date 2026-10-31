@@ -124,21 +124,33 @@ func main() {
 	// the publish path) wait for the write lock instead of failing immediately
 	// with "database is locked". WAL is also required by litestream replication.
 	//
-	// We deliberately keep the default *deferred* transaction locking (no
-	// _txlock=immediate): sqlq runs each job handler inside a write transaction
-	// but writes nothing to it until the handler returns. With deferred locking
-	// that wrapping tx holds no write lock while the handler runs, so the
-	// handler's own repository writes and follow-up Publish calls (each on a
+	// db keeps the default *deferred* transaction locking: sqlq runs each job
+	// handler inside a transaction on db but writes nothing to it until the
+	// handler returns. With deferred locking that wrapping tx holds no write
+	// lock while the handler runs, so the handler's own writes (each on a
 	// separate pooled connection) can acquire the write lock. _txlock=immediate
-	// would grab the lock at BEGIN and self-deadlock the handler against its own
-	// queue transaction. Deferred is safe here because no handler holds a read
-	// lock that it later upgrades to a write within a single transaction.
+	// on db would grab the lock at BEGIN and self-deadlock the handler against
+	// its own queue transaction.
+	//
+	// The service repository's own transactions read and then write. A deferred
+	// transaction in WAL mode cannot wait for the write lock when another
+	// connection commits between its read and its write: SQLite returns
+	// SQLITE_BUSY immediately, and the busy timeout does not apply. Thus these
+	// transactions run on txDB, which takes the write lock at BEGIN and waits
+	// for it with the busy timeout.
 	dsn := "file:" + dbPath + "?_journal_mode=WAL&_busy_timeout=5000"
 	db, err := otelsql.Open("sqlite3", dsn,
 		otelsql.WithAttributes(semconv.DBSystemSqlite),
 	)
 	if err != nil {
 		logger.ErrorContext(ctx, "error opening db", slog.Any("error", err))
+		os.Exit(1)
+	}
+	txDB, err := otelsql.Open("sqlite3", dsn+"&_txlock=immediate",
+		otelsql.WithAttributes(semconv.DBSystemSqlite),
+	)
+	if err != nil {
+		logger.ErrorContext(ctx, "error opening tx db", slog.Any("error", err))
 		os.Exit(1)
 	}
 	otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemSqlite)) //nolint:errcheck
@@ -151,7 +163,7 @@ func main() {
 	}
 	// endregion
 
-	svcRepo := service.NewSqliteRepository(db)
+	svcRepo := service.NewSqliteRepository(db, txDB)
 	s3Store := service.NewS3Store(s3Client, awsBucketName)
 	obfuscateIDs := func(id string) string {
 		hash := sha256.Sum256([]byte(userPathSecret + id))

@@ -49,8 +49,9 @@ type SQLJobsQueue struct {
 
 func New(db *sql.DB, concurrency int, logger *slog.Logger) (*SQLJobsQueue, error) {
 	q, err := sqlq.New(db, sqlq.DBTypeSQLite,
+		sqlq.WithLogger(logger),
 		sqlq.WithDefaultConcurrency(uint16(concurrency)), //nolint:gosec
-		sqlq.WithDefaultPollInterval(2*time.Second),
+		sqlq.WithDefaultPollDelayFunc(func(uint16) time.Duration { return 2 * time.Second }),
 		sqlq.WithDefaultJobTimeout(2*time.Hour),
 		// Retry indefinitely: jobs that depend on mediary (create episodes,
 		// regenerate feed) must survive a multi-day mediary outage and resume
@@ -62,9 +63,12 @@ func New(db *sql.DB, concurrency int, logger *slog.Logger) (*SQLJobsQueue, error
 	if err != nil {
 		return nil, err
 	}
-	// Run() initializes the schema (CREATE TABLE IF NOT EXISTS). Call it immediately
-	// so the tables exist before any Publish or Subscribe calls.
-	q.Run()
+	// Run() creates or migrates the schema. Call it immediately so the tables
+	// exist before any Publish or Subscribe calls.
+	ctx := context.Background()
+	if err := q.Run(ctx); err != nil {
+		return nil, err
+	}
 	return &SQLJobsQueue{q: q, logger: logger}, nil
 }
 
@@ -87,7 +91,14 @@ func cappedExponentialBackoff(retryNum uint16) time.Duration {
 // It exists for API compatibility with callers that expect to call Run() after Subscribe().
 func (j *SQLJobsQueue) Run() {}
 
-func (j *SQLJobsQueue) Shutdown() { j.q.Shutdown() }
+// Shutdown stops the consumers and waits up to 30 seconds for running handlers.
+func (j *SQLJobsQueue) Shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := j.q.Shutdown(ctx); err != nil {
+		j.logger.ErrorContext(ctx, "failed to shut down jobs queue", slog.Any("error", err))
+	}
+}
 
 func (j *SQLJobsQueue) Publish(ctx context.Context, jobType string, payload any, opts ...PublishOption) error {
 	return j.q.Publish(ctx, jobType, payload, opts...)

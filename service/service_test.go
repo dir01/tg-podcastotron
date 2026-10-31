@@ -29,7 +29,7 @@ func TestService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo := service.NewSqliteRepository(db)
+	repo := service.NewSqliteRepository(db, db)
 	migrations := &migrate.FileMigrationSource{
 		Dir: "../db/migrations",
 	}

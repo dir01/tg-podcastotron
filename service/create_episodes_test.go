@@ -42,7 +42,7 @@ func newQueueBackedService(t *testing.T, mediarySvc mediary.Service) (*service.S
 		DeleteFunc:       func(ctx context.Context, key string) error { return nil },
 	}
 
-	repo := service.NewSqliteRepository(db)
+	repo := service.NewSqliteRepository(db, db)
 	svc := service.New(mediarySvc, repo, s3Store, queue, "", func(s string) string { return s }, logger, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
