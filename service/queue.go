@@ -36,6 +36,10 @@ type PollEpisodesStatusQueuePayload struct {
 	PollingStartedAt *time.Time
 	Delay            *time.Duration // current delay; used to compute next delay for exponential backoff
 	RequeueCount     int
+	// Attempts is the last mediary attempt number of each episode, by episode ID.
+	// A larger attempt number with the same status means that mediary retried the job
+	// between two polls.
+	Attempts map[string]int `json:",omitempty"`
 }
 
 type RegenerateFeedQueuePayload struct {

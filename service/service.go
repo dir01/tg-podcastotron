@@ -116,6 +116,9 @@ const (
 	EpisodeStatusUploading   EpisodeStatus = "uploading"
 	EpisodeStatusComplete    EpisodeStatus = "complete"
 	EpisodeStatusFailed      EpisodeStatus = "failed"
+	// EpisodeStatusRetrying means that an attempt of the mediary job failed,
+	// and mediary will retry the job.
+	EpisodeStatusRetrying EpisodeStatus = "retrying"
 )
 
 const DefaultFeedID = "1"
@@ -192,6 +195,13 @@ type EpisodeStatusChange struct {
 	Episode   *Episode
 	OldStatus EpisodeStatus
 	NewStatus EpisodeStatus
+	// Error is the reason of a failed mediary attempt. It is set only when the
+	// user did not see this reason before.
+	Error string
+	// Attempt is the number of the mediary attempt. The first attempt is 1. 0 means unknown.
+	Attempt int
+	// MaxAttempts is the maximum number of mediary attempts. 0 means unknown.
+	MaxAttempts int
 }
 
 // EpisodeStatusChanges is a batch of status changes from one job.
@@ -1122,6 +1132,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	episodesStateChanges := make([]EpisodeStatusChange, 0, len(episodesMap))
 	episodesToSave := make([]*Episode, 0, len(episodesMap))
 	episodeIDsToRequeue := make([]string, 0, len(episodesMap))
+	attempts := make(map[string]int, len(episodesMap))
 	for _, ep := range episodesMap {
 		fields := append(fields, slog.String("episode_id", ep.ID), slog.String("mediary_id", ep.MediaryID))
 		jstat, exists := jobStatusMap[ep.MediaryID]
@@ -1129,6 +1140,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			if payload.RequeueCount < maxPollEpisodesRequeueCount {
 				svc.logger.WarnContext(ctx, "mediary job status not found", fields...)
 				episodeIDsToRequeue = append(episodeIDsToRequeue, ep.ID)
+				attempts[ep.ID] = payload.Attempts[ep.ID]
 			} else {
 				svc.logger.WarnContext(ctx, "mediary job status not found, max requeue count reached", fields...)
 			}
@@ -1143,17 +1155,34 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 		if newStatus != EpisodeStatusComplete && newStatus != EpisodeStatusFailed {
 			episodeIDsToRequeue = append(episodeIDsToRequeue, ep.ID)
+			attempts[ep.ID] = jstat.Attempt
 		}
 
-		if newStatus == ep.Status {
+		// The retry delay of mediary can be shorter than the poll delay. Then the poll
+		// does not see the "retrying" status, but it sees a larger attempt number.
+		lastAttempt := payload.Attempts[ep.ID]
+		isNewAttempt := lastAttempt > 0 && jstat.Attempt > lastAttempt
+		if newStatus == ep.Status && !isNewAttempt {
 			continue
 		}
 
-		episodesStateChanges = append(episodesStateChanges, EpisodeStatusChange{
-			Episode:   ep,
-			OldStatus: ep.Status,
-			NewStatus: newStatus,
-		})
+		change := EpisodeStatusChange{
+			Episode:     ep,
+			OldStatus:   ep.Status,
+			NewStatus:   newStatus,
+			Attempt:     jstat.Attempt,
+			MaxAttempts: jstat.MaxAttempts,
+		}
+		// Mediary keeps the error while the next attempt runs. Show it only one time:
+		// with the "retrying" or "failed" status, or with the new attempt. The user saw
+		// the error of the new attempt only if the last poll saw "retrying" for the
+		// attempt directly before it. If the poll missed attempts, the error is new.
+		errorWasShown := ep.Status == EpisodeStatusRetrying && jstat.Attempt == lastAttempt+1
+		if newStatus == EpisodeStatusRetrying || newStatus == EpisodeStatusFailed ||
+			(isNewAttempt && !errorWasShown) {
+			change.Error = jstat.Error
+		}
+		episodesStateChanges = append(episodesStateChanges, change)
 
 		ep.Status = newStatus
 		switch newStatus {
@@ -1220,6 +1249,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			EpisodeIDs:   episodeIDsToRequeue,
 			UserID:       payload.UserID,
 			RequeueCount: payload.RequeueCount + 1,
+			Attempts:     attempts,
 		}
 
 		if payload.PollingStartedAt == nil {
@@ -1388,7 +1418,9 @@ func jobStatusToEpisodeStatus(status mediary.JobStatusName) (EpisodeStatus, erro
 		return EpisodeStatusUploading, nil
 	case mediary.JobStatusComplete:
 		return EpisodeStatusComplete, nil
-	case mediary.JobStatusCancelled:
+	case mediary.JobStatusRetrying:
+		return EpisodeStatusRetrying, nil
+	case mediary.JobStatusCancelled, mediary.JobStatusFailed:
 		return EpisodeStatusFailed, nil
 	}
 	return "", fmt.Errorf("unknown job status: %s", string(status))

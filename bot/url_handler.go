@@ -7,8 +7,10 @@ import (
 	"html"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -250,6 +252,8 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 type episodeLogEntry struct {
 	At     time.Time `json:"at"`
 	Status string    `json:"status"`
+	// Detail is the reason of a failed attempt. It is shown below the status.
+	Detail string `json:"detail,omitempty"`
 }
 
 // updateEpisodeLog appends the latest status to the episode's log and reflects it
@@ -277,7 +281,7 @@ func (ub *UndercastBot) updateEpisodeLog(
 			entries = nil
 		}
 	}
-	entries = append(entries, episodeLogEntry{At: time.Now().UTC(), Status: episodeStatusLabel(change.NewStatus)})
+	entries = append(entries, newEpisodeLogEntry(time.Now().UTC(), change))
 
 	var footerFeed *service.Feed
 	if change.NewStatus == service.EpisodeStatusComplete {
@@ -352,14 +356,107 @@ func episodeStatusLabel(status service.EpisodeStatus) string {
 		return "done ✅"
 	case service.EpisodeStatusFailed:
 		return "failed ❌"
+	case service.EpisodeStatusRetrying:
+		return "failed, will retry"
 	default:
 		return string(status)
 	}
 }
 
+func newEpisodeLogEntry(at time.Time, change service.EpisodeStatusChange) episodeLogEntry {
+	label := episodeStatusLabel(change.NewStatus)
+	attempt := formatAttempt(change.Attempt, change.MaxAttempts)
+	switch change.NewStatus {
+	case service.EpisodeStatusRetrying:
+		if attempt != "" {
+			label = attempt + " failed, will retry"
+		}
+	case service.EpisodeStatusComplete, service.EpisodeStatusFailed, service.EpisodeStatusCreated:
+		// The attempt number is not important for these statuses.
+	default:
+		if change.Attempt > 1 {
+			label += " (" + attempt + ")"
+		}
+	}
+	return episodeLogEntry{At: at, Status: label, Detail: change.Error}
+}
+
+// maxEpisodeLogDetailLen limits each error in the status-log message. A Telegram message
+// can have max 4096 characters. The header has the source URL, which can be long, and
+// mediary can send an error for each of its attempts.
+const maxEpisodeLogDetailLen = 200
+
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
+
+// formatAttempt returns "attempt 2 of 6", or "attempt 2" if the maximum is unknown.
+// It returns "" if the attempt number is unknown.
+func formatAttempt(attempt, maxAttempts int) string {
+	if attempt <= 0 {
+		return ""
+	}
+	if maxAttempts <= 0 {
+		return fmt.Sprintf("attempt %d", attempt)
+	}
+	return fmt.Sprintf("attempt %d of %d", attempt, maxAttempts)
+}
+
+// maxEpisodeLogLen is the length budget of the status-log message. A Telegram
+// message can have max 4096 characters, counted in UTF-16 code units after the
+// HTML is parsed. The budget is a little smaller, to be safe.
+const maxEpisodeLogLen = 4000
+
+// maxEpisodeLogHeaderLen limits the title, the source URL and the feed title
+// when the full message is too long.
+const maxEpisodeLogHeaderLen = 200
+
 // renderEpisodeLog builds the full status-log message. footerFeed, when non-nil,
 // adds a "published to" footer (used once the episode is complete).
+//
+// If the message is too long for Telegram, it makes the message shorter in steps:
+// it shortens the header, then it removes the details of all entries but the last,
+// then it removes the oldest entries. The first and the last entry stay.
 func renderEpisodeLog(ep *service.Episode, entries []episodeLogEntry, footerFeed *service.Feed) string {
+	opts := episodeLogRenderOptions{headerLen: -1}
+	text := renderEpisodeLogWith(ep, entries, footerFeed, opts)
+	if fitsTelegram(text) {
+		return text
+	}
+
+	opts.headerLen = maxEpisodeLogHeaderLen
+	text = renderEpisodeLogWith(ep, entries, footerFeed, opts)
+	if fitsTelegram(text) {
+		return text
+	}
+
+	opts.lastDetailOnly = true
+	text = renderEpisodeLogWith(ep, entries, footerFeed, opts)
+	for !fitsTelegram(text) && opts.skipped < len(entries)-2 {
+		opts.skipped++
+		text = renderEpisodeLogWith(ep, entries, footerFeed, opts)
+	}
+	return text
+}
+
+type episodeLogRenderOptions struct {
+	headerLen      int  // max runes of the title, the source URL and the feed title; -1 is no limit
+	lastDetailOnly bool // show only the last detail
+	skipped        int  // number of entries to remove after the first entry
+}
+
+func renderEpisodeLogWith(ep *service.Episode, entries []episodeLogEntry, footerFeed *service.Feed, opts episodeLogRenderOptions) string {
+	header := func(s string) string {
+		if opts.headerLen < 0 {
+			return html.EscapeString(s)
+		}
+		return html.EscapeString(truncateRunes(s, opts.headerLen))
+	}
+
 	title := ep.Title
 	if title == "" {
 		title = "Episode #" + ep.ID
@@ -367,11 +464,11 @@ func renderEpisodeLog(ep *service.Episode, entries []episodeLogEntry, footerFeed
 
 	var b strings.Builder
 	b.WriteString("<b>")
-	b.WriteString(html.EscapeString(title))
+	b.WriteString(header(title))
 	b.WriteString("</b>\n")
 	if ep.SourceURL != "" {
 		b.WriteString("<code>")
-		b.WriteString(html.EscapeString(ep.SourceURL))
+		b.WriteString(header(ep.SourceURL))
 		b.WriteString("</code>\n")
 	}
 	b.WriteString("\n")
@@ -380,21 +477,48 @@ func renderEpisodeLog(ep *service.Episode, entries []episodeLogEntry, footerFeed
 	if len(entries) > 0 {
 		base = entries[0].At
 	}
-	for _, e := range entries {
+	lastDetail := -1
+	for i, e := range entries {
+		if e.Detail != "" {
+			lastDetail = i
+		}
+	}
+	for i, e := range entries {
+		if i > 0 && i <= opts.skipped {
+			if i == 1 {
+				b.WriteString("…\n")
+			}
+			continue
+		}
 		b.WriteString(formatElapsed(e.At.Sub(base)))
 		b.WriteString(" — ")
 		b.WriteString(e.Status)
 		b.WriteString("\n")
+		if e.Detail != "" && (!opts.lastDetailOnly || i == lastDetail) {
+			b.WriteString("    ↳ <i>")
+			b.WriteString(html.EscapeString(truncateRunes(e.Detail, maxEpisodeLogDetailLen)))
+			b.WriteString("</i>\n")
+		}
 	}
 
 	if footerFeed != nil {
 		b.WriteString("\nPublished to <b>")
-		b.WriteString(html.EscapeString(footerFeed.Title))
+		b.WriteString(header(footerFeed.Title))
 		b.WriteString("</b>")
 	}
 	fmt.Fprintf(&b, "\n\n/ee_%s to rename or change feed", ep.ID)
 
 	return b.String()
+}
+
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+
+// fitsTelegram tells if the HTML message is in the budget. Telegram counts the text
+// after it parses the HTML: without the tags, and with the entities decoded. All
+// content in the message is escaped, thus each "<" starts a tag.
+func fitsTelegram(text string) bool {
+	visible := html.UnescapeString(htmlTagRe.ReplaceAllString(text, ""))
+	return len(utf16.Encode([]rune(visible))) <= maxEpisodeLogLen
 }
 
 func formatElapsed(d time.Duration) string {
