@@ -80,3 +80,86 @@ func TestEpisodeStatusLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestNewEpisodeLogEntry(t *testing.T) {
+	at := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name       string
+		change     service.EpisodeStatusChange
+		wantStatus string
+		wantDetail string
+	}{
+		{
+			name:       "first attempt has no attempt number",
+			change:     service.EpisodeStatusChange{NewStatus: service.EpisodeStatusDownloading, Attempt: 1, MaxAttempts: 6},
+			wantStatus: "downloading",
+		},
+		{
+			name:       "old mediary without attempts",
+			change:     service.EpisodeStatusChange{NewStatus: service.EpisodeStatusProcessing},
+			wantStatus: "encoding",
+		},
+		{
+			name:       "retrying",
+			change:     service.EpisodeStatusChange{NewStatus: service.EpisodeStatusRetrying, Attempt: 2, MaxAttempts: 6, Error: "stalled"},
+			wantStatus: "attempt 2 of 6 failed, will retry",
+			wantDetail: "stalled",
+		},
+		{
+			name:       "retrying without attempt number",
+			change:     service.EpisodeStatusChange{NewStatus: service.EpisodeStatusRetrying},
+			wantStatus: "failed, will retry",
+		},
+		{
+			name:       "retry attempt",
+			change:     service.EpisodeStatusChange{NewStatus: service.EpisodeStatusDownloading, Attempt: 3, MaxAttempts: 6, Error: "stalled"},
+			wantStatus: "downloading (attempt 3 of 6)",
+			wantDetail: "stalled",
+		},
+		{
+			name:       "retry attempt with unknown maximum",
+			change:     service.EpisodeStatusChange{NewStatus: service.EpisodeStatusUploading, Attempt: 2},
+			wantStatus: "uploading (attempt 2)",
+		},
+		{
+			name:       "failed",
+			change:     service.EpisodeStatusChange{NewStatus: service.EpisodeStatusFailed, Attempt: 6, MaxAttempts: 6, Error: "timed out"},
+			wantStatus: "failed ❌",
+			wantDetail: "timed out",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := newEpisodeLogEntry(at, tc.change)
+			if got.At != at || got.Status != tc.wantStatus || got.Detail != tc.wantDetail {
+				t.Errorf("got %+v, want status %q and detail %q", got, tc.wantStatus, tc.wantDetail)
+			}
+		})
+	}
+}
+
+func TestRenderEpisodeLog_Detail(t *testing.T) {
+	base := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	entries := []episodeLogEntry{
+		{At: base, Status: "downloading"},
+		{At: base.Add(time.Hour), Status: "failed ❌", Detail: "3 of 35 files <complete> & stalled"},
+	}
+
+	got := renderEpisodeLog(&service.Episode{ID: "7"}, entries, nil)
+
+	want := "01:00:00 — failed ❌\n    ↳ <i>3 of 35 files &lt;complete&gt; &amp; stalled</i>\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("rendered log missing %q:\n%s", want, got)
+	}
+}
+
+func TestRenderEpisodeLog_LongDetailIsTruncated(t *testing.T) {
+	entries := []episodeLogEntry{{At: time.Now(), Status: "failed ❌", Detail: strings.Repeat("é", 500)}}
+
+	got := renderEpisodeLog(&service.Episode{ID: "7"}, entries, nil)
+
+	want := "<i>" + strings.Repeat("é", maxEpisodeLogDetailLen-1) + "…</i>"
+	if !strings.Contains(got, want) {
+		t.Errorf("expected the detail to be truncated to %d runes:\n%s", maxEpisodeLogDetailLen, got)
+	}
+}

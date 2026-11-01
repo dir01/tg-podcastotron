@@ -87,6 +87,13 @@ type JobStatus struct {
 	Status              JobStatusName `json:"status"`
 	ResultMediaDuration time.Duration `json:"result_media_duration"`
 	ResultFileBytes     int64         `json:"result_file_bytes"`
+	// Error is the reason of the last failed attempt. Mediary keeps it while the next
+	// attempt runs, and clears it when the job is complete.
+	Error string `json:"error,omitempty"`
+	// Attempt is the number of the current or last attempt. The first attempt is 1.
+	Attempt int `json:"attempt,omitempty"`
+	// MaxAttempts is the maximum number of attempts. 0 means unknown.
+	MaxAttempts int `json:"max_attempts,omitempty"`
 }
 
 type JobStatusName string
@@ -99,6 +106,10 @@ const (
 	JobStatusUploading   JobStatusName = "uploading"
 	JobStatusComplete    JobStatusName = "complete"
 	JobStatusCancelled   JobStatusName = "cancelled"
+	// JobStatusRetrying means that an attempt failed and mediary will retry the job.
+	JobStatusRetrying JobStatusName = "retrying"
+	// JobStatusFailed means that the last attempt failed. Mediary will not retry the job.
+	JobStatusFailed JobStatusName = "failed"
 )
 
 func (svc *service) IsValidURL(ctx context.Context, mediaURL string) (bool, error) {
