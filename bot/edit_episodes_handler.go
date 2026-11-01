@@ -48,6 +48,13 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 		return
 	}
 
+	// A range can contain deleted episodes. Edit only the episodes that exist.
+	epIDs, missingIDs := splitFoundEpisodeIDs(epIDs, episodesMap)
+	if len(epIDs) == 0 {
+		ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Episodes not found: %s", formatMissingIDs(missingIDs)))
+		return
+	}
+
 	feeds, err := ub.service.ListFeeds(ctx, userID)
 	if err != nil {
 		ub.handleError(ctx, chatID, fmt.Errorf("failed to list feeds: %w", err))
@@ -58,11 +65,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 		feedMap[feed.ID] = feed
 	}
 
-	initialMessageText, err := ub.formatInitialMessage(epIDs, episodesMap, feedMap)
-	if err != nil {
-		ub.handleError(ctx, chatID, fmt.Errorf("failed to format initial message: %w", err))
-		return
-	}
+	initialMessageText := ub.formatInitialMessage(epIDs, missingIDs, episodesMap, feedMap)
 
 	prefix := fmt.Sprintf("editEpisodes_%s_%s", userID, bot.RandomString(10))
 	cmdRename := "rename"
@@ -239,26 +242,53 @@ func formatManageFeedsStatusMessage(epIDs []string, feedIDs []string) string {
 	return statusMsgText
 }
 
-func (ub *UndercastBot) formatInitialMessage(epIDs []string, episodesMap map[string]*service.Episode, feedMap map[string]*service.Feed) (string, error) {
+func (ub *UndercastBot) formatInitialMessage(epIDs, missingIDs []string, episodesMap map[string]*service.Episode, feedMap map[string]*service.Feed) string {
 	var initialMessageParts []string
 	for _, epID := range epIDs {
-		ep := episodesMap[epID]
-		if ep == nil {
-			return "", fmt.Errorf("episode not found")
-		}
-		initialMessageParts = append(initialMessageParts, ub.renderEpisodeShort(ep)) // TODO: split into multiple messages if too long
+		initialMessageParts = append(initialMessageParts, ub.renderEpisodeShort(episodesMap[epID])) // TODO: split into multiple messages if too long
+	}
+	if len(missingIDs) > 0 {
+		initialMessageParts = append(initialMessageParts, fmt.Sprintf("Episodes not found (skipped): %s", formatMissingIDs(missingIDs)))
 	}
 	initialMessageParts = append(initialMessageParts, editEpisodesHelp)
 	initialMessageText := strings.Join(initialMessageParts, "\n\n")
 
 	if len(initialMessageText) > 4096 {
-		return strings.Join([]string{
+		parts := []string{
 			fmt.Sprintf("You are editing %d episodes. Full info is too long to fit on one page. Try to select less episodes if you want to see what you are editing", len(epIDs)),
-			editEpisodesHelp,
-		}, "\n\n"), nil
+		}
+		if len(missingIDs) > 0 {
+			parts = append(parts, fmt.Sprintf("%d episodes were not found and were skipped.", len(missingIDs)))
+		}
+		return strings.Join(append(parts, editEpisodesHelp), "\n\n")
 	}
 
-	return initialMessageText, nil
+	return initialMessageText
+}
+
+// maxMissingIDsShown limits the missing IDs in a message, because a range such as
+// /ee_1_to_1000 can have too many IDs for one Telegram message.
+const maxMissingIDsShown = 20
+
+// formatMissingIDs shows the first maxMissingIDsShown IDs and the number of the other IDs.
+func formatMissingIDs(ids []string) string {
+	if len(ids) <= maxMissingIDsShown {
+		return strings.Join(ids, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(ids[:maxMissingIDsShown], ", "), len(ids)-maxMissingIDsShown)
+}
+
+// splitFoundEpisodeIDs keeps the order of epIDs. It returns the IDs that are in
+// episodesMap, and the IDs that are not.
+func splitFoundEpisodeIDs(epIDs []string, episodesMap map[string]*service.Episode) (found, missing []string) {
+	for _, id := range epIDs {
+		if episodesMap[id] != nil {
+			found = append(found, id)
+		} else {
+			missing = append(missing, id)
+		}
+	}
+	return found, missing
 }
 
 func (ub *UndercastBot) parseEditEpisodesCmd(text string) (epIDs []string) {

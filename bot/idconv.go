@@ -77,6 +77,9 @@ func parseIDs(idsStr string) ([]string, error) {
 	var result []int
 	for i, p := range parts {
 		if p == "to" {
+			if len(result) == 0 || i+1 >= len(parts) {
+				return nil, fmt.Errorf("range %q has no start or no end", idsStr)
+			}
 			end, err := strconv.Atoi(parts[i+1])
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse id %q: %w", p, err)

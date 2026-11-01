@@ -49,3 +49,11 @@ func TestIDConv(t *testing.T) {
 		}
 	}
 }
+
+func TestParseIDs_RangeWithoutStartOrEnd(t *testing.T) {
+	for _, idsStr := range []string{"to_5", "5_to", "to"} {
+		if ids, err := parseIDs(idsStr); err == nil {
+			t.Errorf("parseIDs(%q) = %v, want an error", idsStr, ids)
+		}
+	}
+}
