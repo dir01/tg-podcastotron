@@ -1174,10 +1174,12 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			MaxAttempts: jstat.MaxAttempts,
 		}
 		// Mediary keeps the error while the next attempt runs. Show it only one time:
-		// with the "retrying" or "failed" status, or with the new attempt if the poll
-		// did not see the "retrying" status.
+		// with the "retrying" or "failed" status, or with the new attempt. The user saw
+		// the error of the new attempt only if the last poll saw "retrying" for the
+		// attempt directly before it. If the poll missed attempts, the error is new.
+		errorWasShown := ep.Status == EpisodeStatusRetrying && jstat.Attempt == lastAttempt+1
 		if newStatus == EpisodeStatusRetrying || newStatus == EpisodeStatusFailed ||
-			(isNewAttempt && ep.Status != EpisodeStatusRetrying) {
+			(isNewAttempt && !errorWasShown) {
 			change.Error = jstat.Error
 		}
 		episodesStateChanges = append(episodesStateChanges, change)

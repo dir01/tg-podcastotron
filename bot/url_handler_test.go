@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"html"
 	"strings"
 	"testing"
 	"time"
@@ -161,5 +162,61 @@ func TestRenderEpisodeLog_LongDetailIsTruncated(t *testing.T) {
 	want := "<i>" + strings.Repeat("é", maxEpisodeLogDetailLen-1) + "…</i>"
 	if !strings.Contains(got, want) {
 		t.Errorf("expected the detail to be truncated to %d runes:\n%s", maxEpisodeLogDetailLen, got)
+	}
+}
+
+func TestRenderEpisodeLog_FitsTelegramLimit(t *testing.T) {
+	base := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	ep := &service.Episode{
+		ID:        "7",
+		Title:     "Book",
+		SourceURL: "magnet:?xt=urn:btih:abc&dn=" + strings.Repeat("tracker&", 400), // about 3200 characters
+	}
+	short := []episodeLogEntry{{At: base, Status: "added"}, {At: base.Add(time.Minute), Status: "downloading"}}
+
+	if fitsTelegram("<b>a</b>" + strings.Repeat("&amp;", maxEpisodeLogLen)) {
+		t.Errorf("expected tags to count 0 and each entity to count 1")
+	}
+	if !fitsTelegram("<b>a</b>" + strings.Repeat("&amp;", maxEpisodeLogLen-1)) {
+		t.Errorf("expected tags to count 0 and each entity to count 1")
+	}
+
+	// A message that fits is not changed.
+	if got := renderEpisodeLog(ep, short, nil); !strings.Contains(got, html.EscapeString(ep.SourceURL)) {
+		t.Errorf("expected the full source URL when the message fits:\n%s", got)
+	}
+
+	entries := []episodeLogEntry{{At: base, Status: "added"}}
+	for i := 1; i <= 6; i++ {
+		entries = append(entries,
+			episodeLogEntry{At: base.Add(time.Duration(i) * time.Hour), Status: "downloading"},
+			episodeLogEntry{At: base.Add(time.Duration(i)*time.Hour + time.Minute), Status: "attempt failed", Detail: strings.Repeat("e", 300)},
+		)
+	}
+	entries = append(entries, episodeLogEntry{At: base.Add(7 * time.Hour), Status: "failed ❌", Detail: "the last error"})
+
+	got := renderEpisodeLog(ep, entries, nil)
+	if !fitsTelegram(got) {
+		t.Fatalf("message is too long:\n%s", got)
+	}
+	for _, want := range []string{"00:00:00 — added", "07:00:00 — failed ❌", "↳ <i>the last error</i>", "/ee_7"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("shortened message missing %q:\n%s", want, got)
+		}
+	}
+
+	// Many entries without details: the oldest entries are removed, the first and the last stay.
+	many := []episodeLogEntry{{At: base, Status: "added"}}
+	for i := 1; i <= 300; i++ {
+		many = append(many, episodeLogEntry{At: base.Add(time.Duration(i) * time.Minute), Status: "downloading"})
+	}
+	got = renderEpisodeLog(ep, many, nil)
+	if !fitsTelegram(got) {
+		t.Fatalf("message is too long:\n%s", got)
+	}
+	for _, want := range []string{"00:00:00 — added\n…\n", "05:00:00 — downloading"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("shortened message missing %q:\n%s", want, got)
+		}
 	}
 }

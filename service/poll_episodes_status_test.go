@@ -105,32 +105,40 @@ func TestPollEpisodesStatus_ReportsMediaryRetries(t *testing.T) {
 		if got == nil {
 			t.Fatalf("expected a change to %s, got no change", status)
 		}
-		if got.NewStatus != status || got.Attempt != attempt || got.MaxAttempts != 3 || got.Error != errText {
-			t.Fatalf("expected status=%s attempt=%d/3 error=%q, got status=%s attempt=%d/%d error=%q",
+		if got.NewStatus != status || got.Attempt != attempt || got.MaxAttempts != 6 || got.Error != errText {
+			t.Fatalf("expected status=%s attempt=%d/6 error=%q, got status=%s attempt=%d/%d error=%q",
 				status, attempt, errText, got.NewStatus, got.Attempt, got.MaxAttempts, got.Error)
 		}
 	}
 
-	expect(poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 1, MaxAttempts: 3}),
+	expect(poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 1, MaxAttempts: 6}),
 		EpisodeStatusDownloading, 1, "")
 
-	if got := poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 1, MaxAttempts: 3}); got != nil {
+	if got := poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 1, MaxAttempts: 6}); got != nil {
 		t.Fatalf("expected no change for the same status and attempt, got %+v", got)
 	}
 
 	// The poll did not see "retrying". The new attempt shows the error of the failed attempt.
-	expect(poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 2, MaxAttempts: 3, Error: "stalled"}),
+	expect(poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 2, MaxAttempts: 6, Error: "stalled"}),
 		EpisodeStatusDownloading, 2, "stalled")
 
-	expect(poll(mediary.JobStatus{Status: mediary.JobStatusRetrying, Attempt: 2, MaxAttempts: 3, Error: "stalled again"}),
+	expect(poll(mediary.JobStatus{Status: mediary.JobStatusRetrying, Attempt: 2, MaxAttempts: 6, Error: "stalled again"}),
 		EpisodeStatusRetrying, 2, "stalled again")
 
 	// The poll saw "retrying" with this error. Do not show it again.
-	expect(poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 3, MaxAttempts: 3, Error: "stalled again"}),
+	expect(poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 3, MaxAttempts: 6, Error: "stalled again"}),
 		EpisodeStatusDownloading, 3, "")
 
-	expect(poll(mediary.JobStatus{Status: mediary.JobStatusFailed, Attempt: 3, MaxAttempts: 3, Error: "timed out"}),
-		EpisodeStatusFailed, 3, "timed out")
+	expect(poll(mediary.JobStatus{Status: mediary.JobStatusRetrying, Attempt: 3, MaxAttempts: 6, Error: "no peers"}),
+		EpisodeStatusRetrying, 3, "no peers")
+
+	// The poll saw "retrying" for attempt 3, but it missed attempt 4. The error is from
+	// attempt 4, and the user did not see it.
+	expect(poll(mediary.JobStatus{Status: mediary.JobStatusDownloading, Attempt: 5, MaxAttempts: 6, Error: "disk full"}),
+		EpisodeStatusDownloading, 5, "disk full")
+
+	expect(poll(mediary.JobStatus{Status: mediary.JobStatusFailed, Attempt: 6, MaxAttempts: 6, Error: "timed out"}),
+		EpisodeStatusFailed, 6, "timed out")
 
 	eps, err := repo.GetEpisodesMap(ctx, "u1", []string{"1"})
 	if err != nil {
