@@ -51,7 +51,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 	// A range can contain deleted episodes. Edit only the episodes that exist.
 	epIDs, missingIDs := splitFoundEpisodeIDs(epIDs, episodesMap)
 	if len(epIDs) == 0 {
-		ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Episodes not found: %s", strings.Join(missingIDs, ", ")))
+		ub.sendTextMessage(ctx, chatID, fmt.Sprintf("Episodes not found: %s", formatMissingIDs(missingIDs)))
 		return
 	}
 
@@ -248,7 +248,7 @@ func (ub *UndercastBot) formatInitialMessage(epIDs, missingIDs []string, episode
 		initialMessageParts = append(initialMessageParts, ub.renderEpisodeShort(episodesMap[epID])) // TODO: split into multiple messages if too long
 	}
 	if len(missingIDs) > 0 {
-		initialMessageParts = append(initialMessageParts, fmt.Sprintf("Episodes not found (skipped): %s", strings.Join(missingIDs, ", ")))
+		initialMessageParts = append(initialMessageParts, fmt.Sprintf("Episodes not found (skipped): %s", formatMissingIDs(missingIDs)))
 	}
 	initialMessageParts = append(initialMessageParts, editEpisodesHelp)
 	initialMessageText := strings.Join(initialMessageParts, "\n\n")
@@ -264,6 +264,18 @@ func (ub *UndercastBot) formatInitialMessage(epIDs, missingIDs []string, episode
 	}
 
 	return initialMessageText
+}
+
+// maxMissingIDsShown limits the missing IDs in a message, because a range such as
+// /ee_1_to_1000 can have too many IDs for one Telegram message.
+const maxMissingIDsShown = 20
+
+// formatMissingIDs shows the first maxMissingIDsShown IDs and the number of the other IDs.
+func formatMissingIDs(ids []string) string {
+	if len(ids) <= maxMissingIDsShown {
+		return strings.Join(ids, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(ids[:maxMissingIDsShown], ", "), len(ids)-maxMissingIDsShown)
 }
 
 // splitFoundEpisodeIDs keeps the order of epIDs. It returns the IDs that are in
