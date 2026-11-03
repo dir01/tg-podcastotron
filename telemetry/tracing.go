@@ -48,6 +48,11 @@ func AttrEpisodeID(episodeID string) attribute.KeyValue {
 	return attribute.String("episode.id", episodeID)
 }
 
+// AttrEpisodeStatus creates an attribute for episode status.
+func AttrEpisodeStatus(status string) attribute.KeyValue {
+	return attribute.String("episode.status", status)
+}
+
 // AttrFeedID creates an attribute for feed ID.
 func AttrFeedID(feedID string) attribute.KeyValue {
 	return attribute.String("feed.id", feedID)

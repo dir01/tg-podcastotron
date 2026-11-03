@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"time"
 
 	"net/http"
 
@@ -170,6 +171,10 @@ func main() {
 		return hex.EncodeToString(hash[:])
 	}
 	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, defaultFeedTitle, obfuscateIDs, logger, metrics)
+	if _, err := service.RegisterEpisodeGauges(telemetry.Meter(), svcRepo, logger, time.Now); err != nil {
+		logger.ErrorContext(ctx, "error registering episode gauges", slog.Any("error", err))
+		os.Exit(1)
+	}
 
 	botStore := bot.NewSqliteRepository(db)
 	authRepo := auth.NewSqliteRepository(db)
