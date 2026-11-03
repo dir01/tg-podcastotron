@@ -123,7 +123,7 @@ func (ub *UndercastBot) editEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 			} else {
 				ub.bot.RegisterHandlerMatchFunc(
 					func(update *models.Update) bool {
-						return update.Message.ReplyToMessage != nil && update.Message.ReplyToMessage.ID == renamePromptMsg.ID
+						return isReplyTo(update, renamePromptMsg.ID)
 					},
 					func(ctx context.Context, b *bot.Bot, update *models.Update) {
 						newTitlePattern := update.Message.Text

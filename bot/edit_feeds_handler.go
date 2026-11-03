@@ -126,7 +126,7 @@ func (ub *UndercastBot) editFeedsHandler(ctx context.Context, b *bot.Bot, update
 			} else {
 				ub.bot.RegisterHandlerMatchFunc(
 					func(update *models.Update) bool {
-						return update.Message.ReplyToMessage != nil && update.Message.ReplyToMessage.ID == renamePromptMsg.ID
+						return isReplyTo(update, renamePromptMsg.ID)
 					},
 					func(ctx context.Context, b *bot.Bot, update *models.Update) {
 						newTitle := update.Message.Text
