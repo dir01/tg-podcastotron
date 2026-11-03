@@ -97,6 +97,8 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/adduser", bot.MatchTypeExact, ub.addUserHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/gc", bot.MatchTypeExact, ub.gcHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, gcCallbackPrefix, bot.MatchTypePrefix, ub.gcCallbackHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, feedPageCallbackPrefix, bot.MatchTypePrefix, ub.feedPageCallbackHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, episodesPageCallbackPrefix, bot.MatchTypePrefix, ub.episodesPageCallbackHandler)
 	ub.bot.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		return update != nil && update.Message != nil && update.Message.Contact != nil
 	}, ub.addUserHandler)

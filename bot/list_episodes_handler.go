@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/go-telegram/bot"
@@ -61,27 +63,75 @@ func (ub *UndercastBot) listEpisodesHandler(ctx context.Context, b *bot.Bot, upd
 		return
 	}
 
-	for _, ep := range episodes {
-		var text string
-		if epID == "" {
-			text = ub.renderEpisodeShort(ep)
-		} else {
-			feeds, err := ub.service.ListEpisodeFeeds(ctx, userID, ep.ID)
-			if err != nil {
-				ub.handleError(ctx, chatID, fmt.Errorf("failed to list episode feeds: %w", err))
-				return
-			}
-			text = ub.renderEpisodeFull(ep, feeds)
+	params := &bot.SendMessageParams{ChatID: chatID, ParseMode: models.ParseModeHTML}
+	if epID == "" {
+		text, markup := ub.renderEpisodesPage(episodes, 0)
+		params.Text = text
+		if markup != nil {
+			params.ReplyMarkup = markup
 		}
-		if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:    chatID,
-			ParseMode: models.ParseModeHTML,
-			Text:      text,
-		}); err != nil {
-			ub.handleError(ctx, chatID, fmt.Errorf("failed to send message: %w", err))
+	} else {
+		ep := episodes[0]
+		feeds, err := ub.service.ListEpisodeFeeds(ctx, userID, ep.ID)
+		if err != nil {
+			ub.handleError(ctx, chatID, fmt.Errorf("failed to list episode feeds: %w", err))
 			return
 		}
+		params.Text = ub.renderEpisodeFull(ep, feeds)
 	}
+	if _, err := b.SendMessage(ctx, params); err != nil {
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to send message: %w", err))
+	}
+}
+
+// episodesPageCallbackPrefix starts the callback data of the page buttons: "epp:<page>".
+const episodesPageCallbackPrefix = "epp:"
+
+// episodesPageCallbackHandler shows a different page of the episode list in the same message.
+func (ub *UndercastBot) episodesPageCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	cq := update.CallbackQuery
+	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: cq.ID}); err != nil {
+		ub.logger.ErrorContext(ctx, "failed to answer episodes page callback", slog.Any("error", err))
+	}
+
+	userID := ub.extractUserID(update)
+	chatID := ub.extractChatID(update)
+	msg := cq.Message.Message
+	page, err := strconv.Atoi(strings.TrimPrefix(cq.Data, episodesPageCallbackPrefix))
+	if err != nil || msg == nil {
+		return
+	}
+
+	episodes, err := ub.service.ListUserEpisodes(ctx, userID)
+	if err != nil {
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to list episodes: %w", err))
+		return
+	}
+
+	text, markup := ub.renderEpisodesPage(episodes, page)
+	params := &bot.EditMessageTextParams{ChatID: chatID, MessageID: msg.ID, Text: text, ParseMode: models.ParseModeHTML}
+	if markup != nil {
+		params.ReplyMarkup = markup
+	}
+	if _, err := b.EditMessageText(ctx, params); err != nil && !isMessageNotModifiedError(err) {
+		ub.handleError(ctx, chatID, fmt.Errorf("failed to edit episodes message: %w", err))
+	}
+}
+
+// renderEpisodesPage renders one page of the user's episodes.
+// The markup is nil if all episodes fit on one page.
+func (ub *UndercastBot) renderEpisodesPage(episodes []*service.Episode, page int) (string, *models.InlineKeyboardMarkup) {
+	if len(episodes) == 0 {
+		return "You have no episodes yet", nil
+	}
+	lines := make([]string, len(episodes))
+	for i, ep := range episodes {
+		lines[i] = ub.renderEpisodeShort(ep)
+	}
+	header := fmt.Sprintf("Episodes: %d", len(episodes))
+	return renderPagedLines(header, lines, page, func(p int) string {
+		return fmt.Sprintf("%s%d", episodesPageCallbackPrefix, p)
+	})
 }
 
 func (ub *UndercastBot) parseListEpisodesCmd(text string) (epID string) {
