@@ -2,7 +2,6 @@ package bot
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"html"
 	"log/slog"
@@ -262,8 +261,11 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 			if err != nil {
 				ub.logger.ErrorContext(ctx, "failed to list request episodes", slog.String("request_id", requestID), slog.Any("error", err))
 			}
-			if len(episodes) > 1 {
-				ub.updateGroupMessage(ctx, userID, chatID, episodes, defaultFeed)
+			// A request that has a group message keeps it, also after the user deletes
+			// episodes until only one remains.
+			hasGroupMessage := ub.statusMessages.request(userID, requestID) != 0
+			if len(episodes) > 1 || (hasGroupMessage && len(episodes) > 0) {
+				ub.updateGroupMessage(ctx, userID, chatID, requestID, episodes, defaultFeed)
 				continue
 			}
 			for _, change := range changesByRequest[requestID] {
@@ -292,18 +294,13 @@ func (ub *UndercastBot) updateEpisodeLog(
 ) {
 	epID := change.Episode.ID
 
-	rec, err := ub.repository.GetEpisodeMessage(ctx, userID, epID)
-	if err != nil {
-		ub.logger.ErrorContext(ctx, "failed to load episode message", slog.String("episode_id", epID), slog.Any("error", err))
-		// fall through with rec == nil: we'll start a fresh message
-	}
+	// After a restart there is no message in memory: a new message starts with
+	// only the current status.
+	rec := ub.statusMessages.episode(userID, epID)
 
 	var entries []episodeLogEntry
-	if rec != nil && rec.Log != "" {
-		if err := json.Unmarshal([]byte(rec.Log), &entries); err != nil {
-			ub.logger.ErrorContext(ctx, "failed to unmarshal episode log", slog.String("episode_id", epID), slog.Any("error", err))
-			entries = nil
-		}
+	if rec != nil {
+		entries = rec.entries
 	}
 	entries = append(entries, newEpisodeLogEntry(time.Now().UTC(), change))
 
@@ -313,18 +310,12 @@ func (ub *UndercastBot) updateEpisodeLog(
 	}
 	text := renderEpisodeLog(change.Episode, entries, footerFeed)
 
-	logJSON, err := json.Marshal(entries)
-	if err != nil {
-		ub.logger.ErrorContext(ctx, "failed to marshal episode log", slog.String("episode_id", epID), slog.Any("error", err))
-		return
-	}
-
 	messageID := 0
-	if rec != nil && rec.MessageID != 0 {
-		messageID = rec.MessageID
+	if rec != nil {
+		messageID = rec.messageID
 		if _, err := ub.bot.EditMessageText(ctx, &bot.EditMessageTextParams{
 			ChatID:             chatID,
-			MessageID:          rec.MessageID,
+			MessageID:          rec.messageID,
 			Text:               text,
 			ParseMode:          models.ParseModeHTML,
 			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
@@ -341,17 +332,15 @@ func (ub *UndercastBot) updateEpisodeLog(
 		messageID = ub.sendEpisodeLogMessage(ctx, chatID, text)
 	}
 
+	// A finished episode gets no more status changes, so it is not necessary to remember it.
+	if change.NewStatus == service.EpisodeStatusComplete || change.NewStatus == service.EpisodeStatusFailed {
+		ub.statusMessages.forgetEpisode(userID, epID)
+		return
+	}
 	if messageID == 0 {
-		return // send failed; nothing useful to persist
+		return // send failed; nothing to remember
 	}
-
-	if err := ub.repository.SaveEpisodeMessage(ctx, userID, epID, &EpisodeMessage{
-		ChatID:    chatID,
-		MessageID: messageID,
-		Log:       string(logJSON),
-	}); err != nil {
-		ub.logger.ErrorContext(ctx, "failed to save episode message", slog.String("episode_id", epID), slog.Any("error", err))
-	}
+	ub.statusMessages.setEpisode(userID, epID, &episodeStatusMessage{messageID: messageID, entries: entries})
 }
 
 func (ub *UndercastBot) sendEpisodeLogMessage(ctx context.Context, chatID int64, text string) int {

@@ -15,33 +15,35 @@ import (
 
 // updateGroupMessage shows the status counts of all episodes from one create request
 // in a single Telegram message: it sends that message the first time and edits it
-// after. The message reference is kept in the episode message of the first episode.
+// after. The message reference is kept by request ID, so it does not change when
+// the user deletes some episodes of the request. The reference is in memory only:
+// after a restart, the next status change sends a new message.
 func (ub *UndercastBot) updateGroupMessage(
 	ctx context.Context,
 	userID string,
 	chatID int64,
+	requestID string,
 	episodes []*service.Episode,
 	defaultFeed *service.Feed,
 ) {
-	keyEpID := episodes[0].ID
-	fields := []any{slog.String("request_id", episodes[0].RequestID()), slog.String("episode_id", keyEpID)}
+	fields := []any{slog.String("request_id", requestID)}
 
-	rec, err := ub.repository.GetEpisodeMessage(ctx, userID, keyEpID)
-	if err != nil {
-		ub.logger.ErrorContext(ctx, "failed to load group message", append(fields, slog.Any("error", err))...)
-		// continue with rec == nil: send a new message
-	}
-
+	finished := allEpisodesFinished(episodes)
 	var footerFeed *service.Feed
-	if allEpisodesFinished(episodes) && countStatus(episodes, service.EpisodeStatusComplete) > 0 {
+	if finished && countStatus(episodes, service.EpisodeStatusComplete) > 0 {
 		footerFeed = defaultFeed
 	}
 	text := renderGroupMessage(episodes, time.Now().UTC(), footerFeed)
 
-	if rec != nil && rec.MessageID != 0 {
+	// A finished request gets no more status changes, so it is not necessary to remember it.
+	if finished {
+		defer ub.statusMessages.forgetRequest(userID, requestID)
+	}
+
+	if messageID := ub.statusMessages.request(userID, requestID); messageID != 0 {
 		_, err := ub.bot.EditMessageText(ctx, &bot.EditMessageTextParams{
 			ChatID:             chatID,
-			MessageID:          rec.MessageID,
+			MessageID:          messageID,
 			Text:               text,
 			ParseMode:          models.ParseModeHTML,
 			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
@@ -59,16 +61,10 @@ func (ub *UndercastBot) updateGroupMessage(
 	}
 
 	messageID := ub.sendEpisodeLogMessage(ctx, chatID, text)
-	if messageID == 0 {
-		return // send failed; nothing useful to persist
+	if messageID == 0 || finished {
+		return // nothing to remember
 	}
-	if err := ub.repository.SaveEpisodeMessage(ctx, userID, keyEpID, &EpisodeMessage{
-		ChatID:    chatID,
-		MessageID: messageID,
-		Log:       "[]",
-	}); err != nil {
-		ub.logger.ErrorContext(ctx, "failed to save group message", append(fields, slog.Any("error", err))...)
-	}
+	ub.statusMessages.setRequest(userID, requestID, messageID)
 }
 
 // isMessageNotModifiedError tells if Telegram refused an edit because the text is the same.
