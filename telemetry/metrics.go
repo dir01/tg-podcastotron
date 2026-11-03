@@ -11,6 +11,11 @@ import (
 
 const meterName = "tg-podcastotron"
 
+// Meter returns the meter of the application.
+func Meter() metric.Meter {
+	return otel.Meter(meterName)
+}
+
 // Metrics holds all metric instruments for the application.
 type Metrics struct {
 	// Episode metrics

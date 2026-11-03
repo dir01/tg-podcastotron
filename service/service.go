@@ -60,6 +60,8 @@ type Repository interface {
 	GetEpisodeByCreationKey(ctx context.Context, userID, creationKey string) (*Episode, error)
 	ListEpisodesByStorageKeys(ctx context.Context, storageKeys []string) ([]*Episode, error)
 	ListAllEpisodes(ctx context.Context) ([]*Episode, error)
+	// CountIncompleteEpisodes returns the stats of each status that is not complete and has episodes.
+	CountIncompleteEpisodes(ctx context.Context) ([]EpisodeStatusStats, error)
 
 	BulkInsertPublications(ctx context.Context, publications []*Publication) error
 	ListPublicationsByEpisodeIDs(ctx context.Context, userID string, episodeIDs []string) ([]*Publication, error)

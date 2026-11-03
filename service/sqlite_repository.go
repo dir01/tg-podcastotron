@@ -517,6 +517,32 @@ func toBusinessEpisodes(dbEpisodes []dbEpisode) ([]*Episode, error) {
 	return result, nil
 }
 
+func (r *sqliteRepository) CountIncompleteEpisodes(ctx context.Context) ([]EpisodeStatusStats, error) {
+	var rows []struct {
+		Status          string `db:"status"`
+		Count           int64  `db:"count"`
+		OldestUpdatedAt string `db:"oldest_updated_at"`
+	}
+	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &rows, `
+		SELECT status, COUNT(*) AS count, MIN(updated_at) AS oldest_updated_at
+		FROM episodes
+		WHERE status != ?
+		GROUP BY status
+	`, EpisodeStatusComplete); err != nil {
+		return nil, fmt.Errorf("failed to count episodes by status: %w", err)
+	}
+
+	result := make([]EpisodeStatusStats, len(rows))
+	for i, row := range rows {
+		oldest, err := strToTime(row.OldestUpdatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse oldest updated_at: %w", err)
+		}
+		result[i] = EpisodeStatusStats{Status: EpisodeStatus(row.Status), Count: row.Count, OldestUpdatedAt: oldest}
+	}
+	return result, nil
+}
+
 func (r *sqliteRepository) ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error) {
 	db := r.dbFromContext(ctx)
 
