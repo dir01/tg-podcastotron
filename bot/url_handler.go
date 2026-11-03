@@ -242,9 +242,33 @@ func (ub *UndercastBot) onEpisodesStatusChanges(ctx context.Context, episodeStat
 			}
 		}
 
-		// Each episode owns a single status-log message that we append to and edit in place.
+		// A request with more than one episode gets one message with status counts.
+		// Other episodes get their own status-log message.
+		var requestOrder []string
+		changesByRequest := make(map[string][]service.EpisodeStatusChange)
 		for _, change := range userChanges {
-			ub.updateEpisodeLog(ctx, userID, chatID, change, defaultFeed)
+			requestID := change.Episode.RequestID()
+			if requestID == "" {
+				ub.updateEpisodeLog(ctx, userID, chatID, change, defaultFeed)
+				continue
+			}
+			if _, exists := changesByRequest[requestID]; !exists {
+				requestOrder = append(requestOrder, requestID)
+			}
+			changesByRequest[requestID] = append(changesByRequest[requestID], change)
+		}
+		for _, requestID := range requestOrder {
+			episodes, err := ub.service.ListRequestEpisodes(ctx, userID, requestID)
+			if err != nil {
+				ub.logger.ErrorContext(ctx, "failed to list request episodes", slog.String("request_id", requestID), slog.Any("error", err))
+			}
+			if len(episodes) > 1 {
+				ub.updateGroupMessage(ctx, userID, chatID, episodes, defaultFeed)
+				continue
+			}
+			for _, change := range changesByRequest[requestID] {
+				ub.updateEpisodeLog(ctx, userID, chatID, change, defaultFeed)
+			}
 		}
 	}
 }

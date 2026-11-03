@@ -479,6 +479,29 @@ func (r *sqliteRepository) GetEpisodeByCreationKey(ctx context.Context, userID, 
 	return dbEp.ToBusinessModel()
 }
 
+// ListEpisodesByRequestID returns the episodes whose creation key starts with requestID,
+// ordered by ID.
+func (r *sqliteRepository) ListEpisodesByRequestID(ctx context.Context, userID, requestID string) ([]*Episode, error) {
+	var dbEps []dbEpisode
+	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &dbEps, `
+		SELECT * FROM episodes
+		WHERE user_id = ? AND substr(creation_key, 1, ?) = ?
+		ORDER BY CAST(id AS INTEGER)`,
+		userID, len(requestID)+1, requestID+"/",
+	); err != nil {
+		return nil, fmt.Errorf("failed to list episodes by request id: %w", err)
+	}
+	episodes := make([]*Episode, 0, len(dbEps))
+	for _, dbEp := range dbEps {
+		ep, err := dbEp.ToBusinessModel()
+		if err != nil {
+			return nil, err
+		}
+		episodes = append(episodes, ep)
+	}
+	return episodes, nil
+}
+
 // ListEpisodesByStorageKeys returns episodes of any user whose storage_key is one of storageKeys.
 func (r *sqliteRepository) ListEpisodesByStorageKeys(ctx context.Context, storageKeys []string) ([]*Episode, error) {
 	if len(storageKeys) == 0 {
