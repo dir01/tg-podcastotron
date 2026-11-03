@@ -304,7 +304,11 @@ func (ub *UndercastBot) updateEpisodeLog(
 			Text:               text,
 			ParseMode:          models.ParseModeHTML,
 			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
-		}); err != nil {
+		}); bot.IsTooManyRequestsError(err) {
+			// A new message would also get 429 and would make the rate limit worse.
+			// Keep the message and save the log: the next edit shows this entry too.
+			ub.logger.WarnContext(ctx, "rate limited, skipping episode message edit", slog.String("episode_id", epID), slog.Any("error", err))
+		} else if err != nil {
 			// The original message may have been deleted; start a new one.
 			ub.logger.WarnContext(ctx, "failed to edit episode message, sending a new one", slog.String("episode_id", epID), slog.Any("error", err))
 			messageID = ub.sendEpisodeLogMessage(ctx, chatID, text)
