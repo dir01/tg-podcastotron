@@ -22,7 +22,7 @@ func (ub *UndercastBot) newFeedHandler(ctx context.Context, b *bot.Bot, update *
 	} else {
 		ub.bot.RegisterHandlerMatchFunc(
 			func(update *models.Update) bool {
-				return update.Message.ReplyToMessage != nil && update.Message.ReplyToMessage.ID == feedNamePromptMsg.ID
+				return isReplyTo(update, feedNamePromptMsg.ID)
 			},
 			func(ctx context.Context, b *bot.Bot, update *models.Update) {
 				feedTitle := update.Message.Text

@@ -34,19 +34,6 @@ func NewUndercastBot(
 type Repository interface {
 	SetChatID(ctx context.Context, userID string, chatID int64) error
 	GetChatID(ctx context.Context, userID string) (int64, error)
-
-	// GetEpisodeMessage returns the tracked status-log message for an episode,
-	// or (nil, nil) if none has been recorded yet.
-	GetEpisodeMessage(ctx context.Context, userID, episodeID string) (*EpisodeMessage, error)
-	SaveEpisodeMessage(ctx context.Context, userID, episodeID string, msg *EpisodeMessage) error
-}
-
-// EpisodeMessage is the persisted reference to the single Telegram message that
-// holds an episode's status log, together with the JSON-encoded log entries.
-type EpisodeMessage struct {
-	ChatID    int64
-	MessageID int
-	Log       string
 }
 
 type UndercastBot struct {
@@ -59,6 +46,7 @@ type UndercastBot struct {
 
 	episodesStatusChangesChan chan service.EpisodeStatusChanges
 	gcScans                   gcPendingScans
+	statusMessages            statusMessages
 }
 
 func (ub *UndercastBot) Start(ctx context.Context) error {
@@ -97,6 +85,8 @@ func (ub *UndercastBot) Start(ctx context.Context) error {
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/adduser", bot.MatchTypeExact, ub.addUserHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/gc", bot.MatchTypeExact, ub.gcHandler)
 	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, gcCallbackPrefix, bot.MatchTypePrefix, ub.gcCallbackHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, feedPageCallbackPrefix, bot.MatchTypePrefix, ub.feedPageCallbackHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, episodesPageCallbackPrefix, bot.MatchTypePrefix, ub.episodesPageCallbackHandler)
 	ub.bot.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		return update != nil && update.Message != nil && update.Message.Contact != nil
 	}, ub.addUserHandler)

@@ -52,7 +52,7 @@ flatFiles:
 	}
 }
 
-func titleFromSourceURL(sourceURL string) string {
+func TitleFromSourceURL(sourceURL string) string {
 	u, err := url.Parse(sourceURL)
 	if err != nil {
 		return ""

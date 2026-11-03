@@ -60,3 +60,12 @@ func (ub *UndercastBot) extractUserID(update *models.Update) string {
 		return ""
 	}
 }
+
+// isReplyTo tells if the update is a message that replies to the message with messageID.
+// Match funcs get all updates, and some updates (callback queries, edited messages) have no Message.
+func isReplyTo(update *models.Update, messageID int) bool {
+	return update != nil &&
+		update.Message != nil &&
+		update.Message.ReplyToMessage != nil &&
+		update.Message.ReplyToMessage.ID == messageID
+}

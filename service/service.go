@@ -58,6 +58,7 @@ type Repository interface {
 	DeleteEpisodes(ctx context.Context, userID string, episodeIDs []string) error
 	ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error)
 	GetEpisodeByCreationKey(ctx context.Context, userID, creationKey string) (*Episode, error)
+	ListEpisodesByRequestID(ctx context.Context, userID, requestID string) ([]*Episode, error)
 	ListEpisodesByStorageKeys(ctx context.Context, storageKeys []string) ([]*Episode, error)
 	ListAllEpisodes(ctx context.Context) ([]*Episode, error)
 	// CountIncompleteEpisodes returns the stats of each status that is not complete and has episodes.
@@ -105,6 +106,17 @@ type Episode struct {
 	// created this episode, so that retrying that work finds this row instead of
 	// creating another one. Empty for episodes created before it was introduced.
 	CreationKey string
+}
+
+// RequestID returns the ID of the create request that created the episode.
+// All episodes from one request have the same RequestID.
+// It returns "" for episodes created before CreationKey was introduced.
+func (e *Episode) RequestID() string {
+	requestID, _, found := strings.Cut(e.CreationKey, "/")
+	if !found {
+		return ""
+	}
+	return requestID
 }
 
 type EpisodeStatus string
@@ -291,9 +303,9 @@ func episodeCreationKey(requestID string, variantIdx int) string {
 func torrentEpisodeTitle(mediaURL string, variants []string) string {
 	title := titleFromFilepaths(variants)
 	if title == "" {
-		return titleFromSourceURL(mediaURL)
+		return TitleFromSourceURL(mediaURL)
 	}
-	return fmt.Sprintf("%s - %s", title, titleFromSourceURL(mediaURL))
+	return fmt.Sprintf("%s - %s", title, TitleFromSourceURL(mediaURL))
 }
 
 // CreateEpisode persists a single episode and starts its upload synchronously.
@@ -894,6 +906,11 @@ func (svc *Service) GetPublishedFeedsMap(ctx context.Context, userID string, epI
 	}
 
 	return epToFeedMap, nil
+}
+
+// ListRequestEpisodes returns the episodes that the create request with requestID created.
+func (svc *Service) ListRequestEpisodes(ctx context.Context, userID, requestID string) ([]*Episode, error) {
+	return svc.repository.ListEpisodesByRequestID(ctx, userID, requestID)
 }
 
 func (svc *Service) ListExpiredEpisodes(ctx context.Context, maxAge time.Duration) ([]*Episode, error) {
