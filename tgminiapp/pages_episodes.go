@@ -27,8 +27,8 @@ type episodesData struct {
 	Filter     string
 	Filters    []struct{ Key, Label string }
 	Episodes   []*episodeView
-	Total      int
-	NextOffset int // 0 if there are no more episodes
+	Totals     totals // of all episodes of the filter, not only of this page
+	NextOffset int    // 0 if there are no more episodes
 	Now        time.Time
 }
 
@@ -56,7 +56,7 @@ func (s *Server) episodes(w http.ResponseWriter, r *http.Request, u *User) error
 	}
 	sortNewestFirst(episodes)
 
-	data := &episodesData{Filter: filter, Filters: episodeFilters, Total: len(episodes), Now: s.now()}
+	data := &episodesData{Filter: filter, Filters: episodeFilters, Totals: sumEpisodes(episodes), Now: s.now()}
 	if offset > len(episodes) {
 		offset = len(episodes)
 	}
@@ -197,8 +197,7 @@ func (s *Server) deleteEpisode(w http.ResponseWriter, r *http.Request, u *User) 
 		return err
 	}
 	toast(w, "Episode deleted")
-	navigate(w, "/episodes")
-	return nil
+	return s.replacePage(w, r, "/episodes")
 }
 
 type bulkData struct {
@@ -338,6 +337,5 @@ func (s *Server) bulkDelete(w http.ResponseWriter, r *http.Request, u *User) err
 		return err
 	}
 	toast(w, "Deleted "+plural(len(ids), "episode", "episodes"))
-	navigate(w, "/episodes")
-	return nil
+	return s.replacePage(w, r, "/episodes")
 }

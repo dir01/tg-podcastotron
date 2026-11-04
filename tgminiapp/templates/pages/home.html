@@ -18,13 +18,15 @@
   <h3 class="section-header">Your feeds <a class="link-btn" href="/feeds/new">+ New feed</a></h3>
   <ul class="card list">
     {{range .Feeds}}
-    <li>
+    <li class="link-item">
       <a class="row-link row-chevron" href="/feeds/{{.ID}}">
         <span class="row-text">
           <span class="row-title">{{.Title}}</span>
-          <span class="row-sub">{{plural .Episodes "episode" "episodes"}} · {{if .IsPermanent}}keeps episodes{{else}}deletes episodes after 30 days{{end}}</span>
+          <span class="row-sub">{{.Totals}}</span>
+          <span class="row-sub">{{template "keep-text" .}}</span>
         </span>
       </a>
+      <div class="row-extra">{{template "link-box" .URL}}</div>
     </li>
     {{end}}
   </ul>
@@ -32,7 +34,7 @@
 
 <section class="section">
   <ul class="card list">
-    <li><a class="row-link row-chevron" href="/episodes"><span class="row-title">All episodes</span><span class="row-value">{{.Episodes}}</span></a></li>
+    <li><a class="row-link row-chevron" href="/episodes"><span class="row-text"><span class="row-title">All episodes</span><span class="row-sub">{{.Episodes}}</span></span></a></li>
     {{if .User.IsAdmin}}<li><a class="row-link row-chevron" href="/admin"><span class="row-title">Admin</span></a></li>{{end}}
   </ul>
 </section>

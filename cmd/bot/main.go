@@ -178,6 +178,7 @@ func main() {
 		return hex.EncodeToString(hash[:])
 	}
 	svc := service.New(mediaryService, svcRepo, s3Store, jobsQueue, defaultFeedTitle, obfuscateIDs, logger, metrics)
+	svc.SetPublicURL(miniAppURL) // the feeds link the covers that the Mini App serves
 	if _, err := service.RegisterEpisodeGauges(telemetry.Meter(), svcRepo, logger, time.Now); err != nil {
 		logger.ErrorContext(ctx, "error registering episode gauges", slog.Any("error", err))
 		os.Exit(1)
@@ -238,5 +239,6 @@ func main() {
 
 	statusChanges := svc.Start(ctx)
 	go svc.RunExpiredEpisodesCleanup(ctx, time.NewTicker(24*time.Hour).C)
+	go svc.RunCoverBackfill(ctx)
 	ubot.Start(ctx, statusChanges)
 }

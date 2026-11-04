@@ -1,7 +1,7 @@
 {{/* The file list and the options of a new request. It polls until the file list is known. */}}
 {{define "new-files"}}
 {{if .Loading}}
-<div class="card loading-card" hx-get="/new/{{.Link.ID}}/files?wait={{.Wait}}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">
+<div class="card loading-card" hx-get="/new/{{.Link.ID}}/files?wait={{.Wait}}{{with .Feed}}&amp;feed={{.}}{{end}}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">
   <span class="spinner"></span>
   <p>Getting the file list…</p>
   {{if gt .Wait 5}}<p class="hint">For a torrent, this can take a few minutes. You can close the app: the link stays here.</p>{{end}}
@@ -10,7 +10,7 @@
 <div class="card empty">
   <div class="empty-icon">⚠️</div>
   <p>{{.Error}}</p>
-  <button class="btn" hx-get="/new/{{.Link.ID}}/files" hx-target="closest .card" hx-swap="outerHTML">Try again</button>
+  <button class="btn" hx-get="/new/{{.Link.ID}}/files{{with .Feed}}?feed={{.}}{{end}}" hx-target="closest .card" hx-swap="outerHTML">Try again</button>
 </div>
 {{else}}
 <form id="new-form" class="new-form" hx-post="/new/{{.Link.ID}}" hx-swap="none" data-main-button="Create episodes" data-new-form>
@@ -65,7 +65,7 @@
         <input type="checkbox" name="feed" value="{{.ID}}" {{if contains $.Checked .ID}}checked{{end}}>
         <span class="row-text">
           <span class="row-title">{{.Title}}</span>
-          <span class="row-sub">{{if .IsPermanent}}Keeps episodes{{else}}Deletes episodes after 30 days{{end}}</span>
+          <span class="row-sub">{{template "keep-text" .}}</span>
         </span>
       </label>
       {{end}}

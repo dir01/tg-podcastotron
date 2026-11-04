@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -70,6 +71,7 @@ type Server struct {
 	partials *template.Template
 	metadata *metadataCache
 	gcScans  gcPendingScans
+	mux      *http.ServeMux
 	now      func() time.Time
 	// assetsVersion changes when the static files change. The shell adds it to their URLs.
 	assetsVersion string
@@ -95,6 +97,7 @@ func New(cfg Config, svc *service.Service, authSvc *auth.Service, logger *slog.L
 		return nil, err
 	}
 	s.assetsVersion = version
+	s.mux = s.routes()
 	return s, nil
 }
 
@@ -126,11 +129,16 @@ func (s *Server) parseTemplates() error {
 
 // Handler returns the HTTP handler of the Mini App.
 func (s *Server) Handler() http.Handler {
+	return s.mux
+}
+
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	static, _ := fs.Sub(assets, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", cacheFor(30*24*time.Hour, http.FileServerFS(static))))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
+	mux.HandleFunc("GET /covers/{id}", s.cover)
 
 	handle := func(pattern string, h handlerFunc) { mux.Handle(pattern, s.page(h)) }
 
@@ -142,6 +150,8 @@ func (s *Server) Handler() http.Handler {
 	handle("POST /new/{link}", s.createRequest)
 	handle("GET /requests/{id}", s.request)
 	handle("GET /requests/{id}/progress", s.requestProgress)
+	handle("POST /requests/{id}/feeds", s.requestFeeds)
+	handle("POST /requests/{id}/delete", s.deleteRequest)
 
 	handle("GET /episodes", s.episodes)
 	handle("GET /episodes/bulk", s.bulk)
@@ -323,6 +333,30 @@ func (s *Server) partial(w http.ResponseWriter, name string, data any) error {
 	return nil
 }
 
+// replacePage answers with the page at path, and replaces the current page and its
+// history entry with it. Use it after a step that is finished (a form was sent, or
+// the page was deleted): then Back goes to the screen before, not to the old step.
+func (s *Server) replacePage(w http.ResponseWriter, r *http.Request, path string) error {
+	u, err := url.Parse(path)
+	if err != nil {
+		return err
+	}
+	req := r.Clone(r.Context())
+	req.Method = http.MethodGet
+	req.URL = u
+	req.RequestURI = path
+	req.Body = http.NoBody
+	req.ContentLength = 0
+	req.Form, req.PostForm, req.MultipartForm = nil, nil, nil
+	req.Header.Del("Content-Type")
+
+	w.Header().Set("HX-Retarget", "#main")
+	w.Header().Set("HX-Reswap", "innerHTML show:window:top")
+	w.Header().Set("HX-Replace-Url", path)
+	s.mux.ServeHTTP(w, req)
+	return nil
+}
+
 // navigate tells htmx to load the page at path into the main area, and to add it to the history.
 func navigate(w http.ResponseWriter, path string) {
 	b, _ := json.Marshal(map[string]string{"path": path, "target": "#main"})
@@ -361,6 +395,25 @@ func hashFiles(fsys fs.FS, dir string) (string, error) {
 		return "", fmt.Errorf("failed to hash static files: %w", err)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:12], nil
+}
+
+// cover serves a cover picture. It needs no initData: an <img> cannot send it, and
+// podcast apps load the covers of the feeds. The ID is random, like the S3 keys of
+// the episode files, so nobody can guess it. A cover never changes.
+func (s *Server) cover(w http.ResponseWriter, r *http.Request) {
+	cover, err := s.svc.GetCover(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.logger.ErrorContext(r.Context(), "failed to get cover", slog.Any("error", err))
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+	if cover == nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", cover.MIME)
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	_, _ = w.Write(cover.Data)
 }
 
 // Prefetch starts to get the file list of a link, so that the Mini App can show it sooner.

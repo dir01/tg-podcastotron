@@ -443,6 +443,18 @@ func (r *sqliteRepository) GetEpisodesMap(ctx context.Context, userID string, ep
 
 func (r *sqliteRepository) DeleteEpisodes(ctx context.Context, userID string, episodeIDs []string) error {
 	db := r.dbFromContext(ctx)
+
+	coverQuery, coverArgs, err := sqlx.In(`
+		DELETE FROM covers WHERE id IN (
+			SELECT cover_id FROM episodes WHERE user_id = ? AND id IN (?) AND cover_id != ''
+		)`, userID, episodeIDs)
+	if err != nil {
+		return fmt.Errorf("failed to create IN query: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, db.Rebind(coverQuery), coverArgs...); err != nil {
+		return fmt.Errorf("failed to delete episode covers: %w", err)
+	}
+
 	query, args, err := sqlx.Named(`
 		DELETE FROM episodes 
 			WHERE id IN (:ids) 
@@ -778,6 +790,51 @@ func (r *sqliteRepository) DeletePublications(ctx context.Context, userID string
 
 // endregion
 
+// region episode covers
+
+func (r *sqliteRepository) SaveCover(ctx context.Context, cover *Cover) error {
+	if _, err := r.dbFromContext(ctx).ExecContext(ctx, `
+		INSERT INTO covers (id, mime, data) VALUES (?, ?, ?)`, cover.ID, cover.MIME, cover.Data,
+	); err != nil {
+		return fmt.Errorf("failed to save cover: %w", err)
+	}
+	return nil
+}
+
+func (r *sqliteRepository) GetCover(ctx context.Context, id string) (*Cover, error) {
+	var c Cover
+	if err := r.dbFromContext(ctx).QueryRowxContext(ctx, `
+		SELECT id, mime, data FROM covers WHERE id = ?`, id,
+	).Scan(&c.ID, &c.MIME, &c.Data); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get cover: %w", err)
+	}
+	return &c, nil
+}
+
+func (r *sqliteRepository) SetEpisodeCover(ctx context.Context, userID, episodeID, coverID string) error {
+	if _, err := r.dbFromContext(ctx).ExecContext(ctx, `
+		UPDATE episodes SET cover_id = ? WHERE user_id = ? AND id = ?`, coverID, userID, episodeID,
+	); err != nil {
+		return fmt.Errorf("failed to set episode cover: %w", err)
+	}
+	return nil
+}
+
+func (r *sqliteRepository) ListEpisodesWithoutCover(ctx context.Context) ([]*Episode, error) {
+	var dbEpisodes []dbEpisode
+	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &dbEpisodes, `
+		SELECT * FROM episodes WHERE cover_id IS NULL AND status = ? AND url != ''`,
+		string(EpisodeStatusComplete),
+	); err != nil {
+		return nil, fmt.Errorf("failed to list episodes without cover: %w", err)
+	}
+	return toBusinessEpisodes(dbEpisodes)
+}
+
+// endregion
+
 // region episode events
 
 type dbEpisodeEvent struct {
@@ -918,6 +975,8 @@ type dbEpisode struct {
 	Format          string         `db:"format"`
 	StorageKey      string         `db:"storage_key"`
 	CreationKey     sql.NullString `db:"creation_key"`
+	// SaveEpisode does not write the cover: SetEpisodeCover does.
+	CoverID sql.NullString `db:"cover_id"`
 }
 
 func (dbEpisode) FromBusinessModel(ep *Episode) (*dbEpisode, error) {
@@ -981,6 +1040,7 @@ func (d dbEpisode) ToBusinessModel() (*Episode, error) {
 		Format:          d.Format,
 		StorageKey:      d.StorageKey,
 		CreationKey:     d.CreationKey.String,
+		CoverID:         d.CoverID.String,
 	}, nil
 }
 

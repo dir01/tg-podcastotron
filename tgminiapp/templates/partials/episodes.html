@@ -3,17 +3,20 @@
 {{range .Episodes}}
 <li class="ep-row selectable-row">
   <label class="check" aria-label="Select"><input type="checkbox" name="ids" value="{{.ID}}"></label>
-  <a class="row-link" href="/episodes/{{.ID}}">
-    <span class="ep-title">{{.Title}}</span>
-    <span class="ep-meta">
-      {{if ne .Stage.Class "done"}}<span class="pill st-{{.Stage.Class}}">{{.Stage.Label}}</span>{{end}}
-      {{with duration .Duration}}<span>{{.}}</span>{{end}}
-      {{with bytes .FileLenBytes}}<span>{{.}}</span>{{end}}
-      <span>{{date .CreatedAt $.Now}}</span>
-    </span>
-    <span class="ep-feeds">
-      {{template "feed-chips" .}}
-      {{if .Expires}}<span class="chip chip-muted">deleted in {{plural (daysLeft .ExpiresAt $.Now) "day" "days"}}</span>{{end}}
+  <a class="row-link with-thumb" href="/episodes/{{.ID}}">
+    {{template "thumb" .}}
+    <span class="ep-body">
+      <span class="ep-title">{{.Title}}</span>
+      <span class="ep-meta">
+        {{if ne .Stage.Class "done"}}<span class="pill st-{{.Stage.Class}}">{{.Stage.Label}}</span>{{end}}
+        {{with duration .Duration}}<span>{{.}}</span>{{end}}
+        {{with bytes .FileLenBytes}}<span>{{.}}</span>{{end}}
+        <span>{{date .CreatedAt $.Now}}</span>
+      </span>
+      <span class="ep-feeds">
+        {{template "feed-chips" .}}
+        {{if .Expires}}<span class="chip chip-muted">deleted in {{plural (daysLeft .ExpiresAt $.Now) "day" "days"}}</span>{{end}}
+      </span>
     </span>
   </a>
 </li>

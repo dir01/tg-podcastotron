@@ -169,31 +169,45 @@ func (a *testApp) seed(userID string) {
 	if err := a.svc.AddEpisodesToFeeds(ctx, userID, []string{"1", "2"}, []string{books.ID}); err != nil {
 		a.t.Fatal(err)
 	}
+	if err := a.repo.SaveCover(ctx, &service.Cover{ID: "c1.jpg", MIME: "image/jpeg", Data: []byte{0xFF, 0xD8, 0xFF}}); err != nil {
+		a.t.Fatal(err)
+	}
+	if err := a.repo.SetEpisodeCover(ctx, userID, "1", "c1.jpg"); err != nil {
+		a.t.Fatal(err)
+	}
 }
 
 func TestPages(t *testing.T) {
 	app := newTestApp(t, &DevUser{ID: "100", Username: "admin"})
 	app.seed("100")
 
-	app.get("/", 200, "Podcast-O-Tron", "Your feeds", "Books", "In progress", "The Book", "Admin")
+	app.get("/", 200, "Podcast-O-Tron", "Your feeds", "Books", "Recent links", "The Book", "Admin",
+		"2 episodes · 3 h · 160 MB", "3 episodes · 4 h 30 min · 240 MB",
+		`data-copy="magnet:?xt=urn:btih:abc&amp;dn=The&#43;Book"`, `class="link-box-text">magnet:?xt=urn:btih:abc&amp;dn=The&#43;Book<`,
+		`data-copy="https://s3.example.com/feeds/p-100/2"`)
 	app.get("/home/active", 200, "The Book", `hx-trigger="every 3s"`)
-	app.get("/requests/req1", 200, "Chapter 1", "Chapter 2", "1<span class=\"of\"> of 3", "boom 3", "Books")
+	app.get("/requests/req1", 200, ">Link<", "3 episodes · 4 h 30 min · 240 MB", `id="request-feeds"`, "Books (2/3)", "Chapter 1", "Chapter 2", "1<span class=\"of\"> of 3", "boom 3", "Books", `class="link-box-text">magnet:?xt=urn:btih:abc`)
 	app.get("/requests/req1/progress", 200, `hx-trigger="every 2s"`)
 	app.get("/requests/unknown", 200, "Preparing the episodes")
 	app.get("/requests/unknown/progress?wait=1000", 200, "This request has no episodes")
+	// When the episodes of a new link appear, the poll shows all of the page, with the feeds section.
+	if resp, body := app.do(http.MethodGet, "/requests/req1/progress?prep=1", nil); resp.Header.Get("HX-Retarget") != "#main" || !strings.Contains(body, `id="request-feeds"`) {
+		t.Errorf("first poll with episodes: retarget = %q", resp.Header.Get("HX-Retarget"))
+	}
 
-	app.get("/episodes", 200, "Chapter 1", "Chapter 3", "No feed")
-	app.get("/episodes?show=failed", 200, "Chapter 3")
+	app.get("/episodes", 200, "3 episodes · 4 h 30 min · 240 MB", "Chapter 1", "Chapter 3", "No feed", `<span class="chip"><svg class="keep-icon"`, `class="thumb" src="/covers/c1.jpg"`, "thumb-empty")
+	app.get("/episodes?show=failed", 200, "1 episode · 1 h 30 min · 80 MB", "Chapter 3", `href="/episodes?show=active" hx-replace-url="true"`)
 	if body := app.get("/episodes?show=active", 200, "Chapter 2"); strings.Contains(body, "Chapter 1") {
 		t.Error("the active filter shows a complete episode")
 	}
-	app.get("/episodes/1", 200, "Chapter 1", "<audio", "Books", "stays, because it is in a feed that keeps episodes")
+	app.get("/episodes/1", 200, "Chapter 1", "<audio", "Books", "stays, because it is in a feed that keeps episodes",
+		`class="cover" src="/covers/c1.jpg"`)
 	app.get("/episodes/3", 200, "Chapter 3", "boom 3", "Status history", "This episode is in no feed")
 	app.get("/episodes/2/status", 200, `hx-trigger="every 2s"`, "attempt 2 of 6", "Downloading (attempt 2 of 6)")
 	app.get("/episodes/99", 404)
 	app.get("/episodes/bulk?ids=1&ids=2,3", 200, "Edit 3 episodes", "2 of 3 are in this feed")
 
-	app.get("/feeds/2", 200, "Books", "Copy the feed link", "Chapter 1", "Delete feed")
+	app.get("/feeds/2", 200, "Books", "2 episodes · 3 h · 160 MB", `name="feed" value="2"`, "The new episodes go to this feed.", "Feed link", `class="link-box" data-copy="https://s3.example.com/feeds/p-100/2"`, `data-edit-toggle="feed-rename"`, "Chapter 1", "Delete feed")
 	app.get("/feeds/1", 200, "You cannot delete it")
 	app.get("/feeds/new", 200, "New feed")
 	app.get("/feeds/99", 404)
@@ -247,8 +261,9 @@ func TestNewRequestFlow(t *testing.T) {
 		"feed":     {"1"},
 		"new_feed": {"Audiobooks"},
 	})
-	if path := location(t, resp); !strings.HasPrefix(path, "/requests/") {
-		t.Fatalf("HX-Location = %q", path)
+	// The finished form leaves the history: Back must not open it again.
+	if path := resp.Header.Get("HX-Replace-Url"); !strings.HasPrefix(path, "/requests/") || resp.Header.Get("HX-Retarget") != "#main" {
+		t.Fatalf("HX-Replace-Url = %q, HX-Retarget = %q", path, resp.Header.Get("HX-Retarget"))
 	}
 	feeds, err := app.svc.ListFeeds(context.Background(), "100")
 	if err != nil || len(feeds) != 2 || feeds[1].Title != "Audiobooks" {
@@ -269,6 +284,16 @@ func TestEditing(t *testing.T) {
 	if eps, _ := app.svc.GetEpisodesMap(ctx, "100", []string{"1"}); len(eps["1"].FeedIDs) != 0 {
 		t.Errorf("episode 1 feeds = %v, want none", eps["1"].FeedIDs)
 	}
+
+	// The feeds of all episodes of a link change from the link page.
+	_, body = app.post("/requests/req1/feeds", url.Values{"feed": {"1"}, "in": {"1"}})
+	if !strings.Contains(body, `id="request-feeds"`) || !strings.Contains(body, "open") {
+		t.Errorf("link feeds:\n%s", body)
+	}
+	if eps, _ := app.svc.ListRequests(ctx, "100"); len(eps) != 1 || len(eps[0].Episodes[0].FeedIDs) == 0 {
+		t.Errorf("link episodes are not in the feed")
+	}
+	app.post("/requests/req1/feeds", url.Values{"feed": {"1"}})
 
 	_, body = app.post("/episodes/bulk/feeds", url.Values{"ids": {"1,2,3"}, "feed": {"1"}, "action": {"add"}})
 	if !strings.Contains(body, "All are in this feed") {
@@ -296,9 +321,9 @@ func TestEditing(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("delete the default feed: status = %d, want 400", resp.StatusCode)
 	}
-	resp, _ = app.post("/episodes/bulk/delete", url.Values{"ids": {"2,3"}})
-	if location(t, resp) != "/episodes" {
-		t.Errorf("bulk delete: HX-Location = %q", resp.Header.Get("HX-Location"))
+	resp, body = app.post("/episodes/bulk/delete", url.Values{"ids": {"2,3"}})
+	if resp.Header.Get("HX-Replace-Url") != "/episodes" || !strings.Contains(body, "Part 1") || strings.Contains(body, "New name") {
+		t.Errorf("bulk delete: HX-Replace-Url = %q\n%s", resp.Header.Get("HX-Replace-Url"), body)
 	}
 	if eps, _ := app.svc.ListUserEpisodes(ctx, "100"); len(eps) != 1 {
 		t.Errorf("episodes after delete = %d, want 1", len(eps))
@@ -358,5 +383,62 @@ func TestAccess(t *testing.T) {
 	app.server.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `hx-get="/episodes/1?x=1"`) {
 		t.Errorf("shell: status = %d\n%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCovers(t *testing.T) {
+	app := newTestApp(t, nil) // an <img> sends no initData
+	app.seed("100")
+
+	rec := httptest.NewRecorder()
+	app.server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/covers/c1.jpg", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/jpeg" ||
+		!strings.Contains(rec.Header().Get("Cache-Control"), "immutable") || rec.Body.Len() != 3 {
+		t.Errorf("cover: status = %d, headers = %v, %d bytes", rec.Code, rec.Header(), rec.Body.Len())
+	}
+
+	rec = httptest.NewRecorder()
+	app.server.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/covers/unknown.jpg", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown cover: status = %d, want 404", rec.Code)
+	}
+}
+
+func TestDeleteLink(t *testing.T) {
+	app := newTestApp(t, &DevUser{ID: "100", Username: "admin"})
+	app.seed("100")
+	app.get("/requests/req1", 200, "Delete the link and its 3 episodes", "The episodes that are not ready stop.")
+
+	resp, _ := app.post("/requests/req1/delete", url.Values{})
+	if resp.Header.Get("HX-Replace-Url") != "/" || !strings.Contains(resp.Header.Get("HX-Trigger"), "Deleted 3 episodes") {
+		t.Errorf("delete link: replace = %q, trigger = %q", resp.Header.Get("HX-Replace-Url"), resp.Header.Get("HX-Trigger"))
+	}
+	if eps, _ := app.svc.ListUserEpisodes(context.Background(), "100"); len(eps) != 0 {
+		t.Errorf("episodes after delete = %d, want 0", len(eps))
+	}
+}
+
+func TestLinkFromFeedPage(t *testing.T) {
+	app := newTestApp(t, &DevUser{ID: "100", Username: "admin"})
+	app.seed("100") // the default feed and "Books" (2)
+
+	resp, _ := app.post("/links", url.Values{"url": {"magnet:?xt=urn:btih:abc&dn=The+Book"}, "feed": {"2"}})
+	path := location(t, resp)
+	if !strings.HasPrefix(path, "/new/") || !strings.HasSuffix(path, "?feed=2") {
+		t.Fatalf("HX-Location = %q, want the new page for feed 2", path)
+	}
+
+	link := strings.TrimSuffix(strings.TrimPrefix(path, "/new/"), "?feed=2")
+	var body string
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(body, "data-file") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the file list did not load:\n%s", body)
+		}
+		time.Sleep(10 * time.Millisecond)
+		body = app.get("/new/"+link+"/files?feed=2", 200)
+	}
+	if !strings.Contains(body, `name="feed" value="2" checked`) || strings.Contains(body, `name="feed" value="1" checked`) {
+		t.Errorf("only feed 2 must be selected:\n%s", body)
 	}
 }

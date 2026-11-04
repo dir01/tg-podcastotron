@@ -1,10 +1,12 @@
 {{define "page"}}
 <header class="page-header">
   <h1>Episodes</h1>
+  <p class="hint">{{.Totals}}</p>
 </header>
 
 <nav class="tabs" aria-label="Filter">
-  {{range .Filters}}<a class="tab{{if eq .Key $.Filter}} tab-active{{end}}" href="/episodes{{if ne .Key "all"}}?show={{.Key}}{{end}}">{{.Label}}</a>{{end}}
+  {{/* A filter changes the list, not the screen: it replaces the history entry, so Back leaves the list. */}}
+  {{range .Filters}}<a class="tab{{if eq .Key $.Filter}} tab-active{{end}}" href="/episodes{{if ne .Key "all"}}?show={{.Key}}{{end}}" hx-replace-url="true">{{.Label}}</a>{{end}}
 </nav>
 
 {{if .Episodes}}

@@ -9,13 +9,8 @@
     {{with duration .Episode.Duration}}<li class="row"><span class="row-title">Length</span><span class="row-value">{{.}}</span></li>{{end}}
     {{with bytes .Episode.FileLenBytes}}<li class="row"><span class="row-title">Size</span><span class="row-value">{{.}}</span></li>{{end}}
     <li class="row"><span class="row-title">Added</span><span class="row-value">{{date .Episode.CreatedAt .Now}}, {{.Episode.CreatedAt.Format "15:04"}} UTC</span></li>
-    <li class="row"><span class="row-title">Number</span><span class="row-value">#{{.Episode.ID}}</span></li>
     {{with .Episode.SourceURL}}
-    <li class="row column">
-      <span class="row-title">Source</span>
-      <code class="mono select-all">{{truncate . 300}}</code>
-      <button type="button" class="link-btn" data-copy="{{.}}">Copy the link</button>
-    </li>
+    <li class="row column"><span class="row-title">Link</span>{{template "link-box" .}}</li>
     {{end}}
     {{with .Episode.SourceFilepaths}}
     <li class="row column">
@@ -30,7 +25,7 @@
 
 <section class="section">
   <div class="card list">
-    {{with .Episode.RequestID}}<a class="row-link row-chevron" href="/requests/{{.}}"><span class="row-title">Other episodes from this link</span></a>{{end}}
+    {{with .Episode.RequestID}}<a class="row-link row-chevron" href="/requests/{{.}}"><span class="row-title">All episodes from this link</span></a>{{end}}
     <button class="row danger-row" hx-post="/episodes/{{.Episode.ID}}/delete" hx-swap="none"
       hx-confirm="Delete this episode? Its file is deleted, and it goes out of all feeds.">Delete episode</button>
   </div>

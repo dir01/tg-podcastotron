@@ -1,14 +1,16 @@
 {{/* The arguments of the episode partials are an *episodeData, except where noted. */}}
 {{define "episode-title"}}
 <header id="episode-title" class="page-header">
-  <h1>{{.Episode.Title}}</h1>
-  <details class="inline-edit">
-    <summary class="link-btn">Rename</summary>
-    <form class="inline-form" hx-post="/episodes/{{.Episode.ID}}/title" hx-target="#episode-title" hx-swap="outerHTML">
-      <input class="input" type="text" name="title" value="{{.Episode.Title}}" required>
-      <button class="btn btn-primary" type="submit">Save</button>
-    </form>
-  </details>
+  {{with .Episode.CoverPath}}<img class="cover" src="{{.}}" alt="Cover">{{end}}
+  <p class="overline">Episode #{{.Episode.ID}}</p>
+  <div class="title-row">
+    <h1>{{.Episode.Title}}</h1>
+    {{template "edit-button" "episode-rename"}}
+  </div>
+  <form id="episode-rename" class="inline-form" hidden hx-post="/episodes/{{.Episode.ID}}/title" hx-target="#episode-title" hx-swap="outerHTML">
+    <input class="input" type="text" name="title" value="{{.Episode.Title}}" required>
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
 </header>
 {{end}}
 
@@ -56,7 +58,7 @@
     <label class="row switch-row">
       <span class="row-text">
         <span class="row-title">{{.Title}}</span>
-        <span class="row-sub">{{if .IsPermanent}}Keeps episodes{{else}}Deletes episodes after 30 days{{end}}</span>
+        <span class="row-sub">{{template "keep-text" .}}</span>
       </span>
       <input class="switch" type="checkbox" name="in" value="1" {{if contains $.Episode.FeedIDs .ID}}checked{{end}}
         hx-post="/episodes/{{$.Episode.ID}}/feeds" hx-vals='{"feed": "{{.ID}}"}' hx-target="#episode-feeds" hx-swap="outerHTML">

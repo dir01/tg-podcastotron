@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/multierr"
@@ -64,6 +66,15 @@ type Repository interface {
 	// CountIncompleteEpisodes returns the stats of each status that is not complete and has episodes.
 	CountIncompleteEpisodes(ctx context.Context) ([]EpisodeStatusStats, error)
 
+	// SaveCover saves a cover picture.
+	SaveCover(ctx context.Context, cover *Cover) error
+	// GetCover returns the cover picture, or (nil, nil) if there is none.
+	GetCover(ctx context.Context, id string) (*Cover, error)
+	// SetEpisodeCover sets the cover of the episode. An empty coverID means that the file has no cover.
+	SetEpisodeCover(ctx context.Context, userID, episodeID, coverID string) error
+	// ListEpisodesWithoutCover returns complete episodes of all users that nobody looked for a cover for yet.
+	ListEpisodesWithoutCover(ctx context.Context) ([]*Episode, error)
+
 	InsertEpisodeEvents(ctx context.Context, events []*EpisodeEvent) error
 	ListEpisodeEvents(ctx context.Context, userID, episodeID string) ([]*EpisodeEvent, error)
 
@@ -89,6 +100,16 @@ type Service struct {
 
 	episodeStatusChangesChan chan EpisodeStatusChanges
 	defaultFeedTitle         string
+	// httpClient reads the start of episode files to find their covers.
+	httpClient *http.Client
+	// publicURL is the public URL of the Mini App. The feeds link the covers there.
+	publicURL string
+}
+
+// SetPublicURL sets the public URL of the Mini App, for example "https://podcasts.example.com".
+// Without it, the feeds have no covers.
+func (svc *Service) SetPublicURL(url string) {
+	svc.publicURL = strings.TrimRight(url, "/")
 }
 
 type Metadata = mediary.Metadata
@@ -115,6 +136,17 @@ type Episode struct {
 	// created this episode, so that retrying that work finds this row instead of
 	// creating another one. Empty for episodes created before it was introduced.
 	CreationKey string
+	// CoverID identifies the cover picture in the covers table. It is empty if the
+	// file has no cover, or if nobody looked for it yet.
+	CoverID string
+}
+
+// CoverPath is the path of the cover picture in the Mini App, or "".
+func (e *Episode) CoverPath() string {
+	if e.CoverID == "" {
+		return ""
+	}
+	return "/covers/" + e.CoverID
 }
 
 // RequestID returns the ID of the create request that created the episode.
@@ -211,6 +243,7 @@ func New(
 		obfuscateIDs:             obfuscateIDs,
 		defaultFeedTitle:         defaultFeedTitle,
 		metrics:                  metrics,
+		httpClient:               &http.Client{Timeout: time.Minute, Transport: otelhttp.NewTransport(http.DefaultTransport)},
 	}
 }
 
@@ -685,6 +718,17 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 	episodesMap, err := svc.GetEpisodesMap(ctx, userID, epIDs)
 	if err != nil {
 		return err
+	}
+
+	// An episode that is not finished stops its mediary job, so that mediary does not
+	// download and upload a file that no episode uses.
+	for _, ep := range episodesMap {
+		if ep.MediaryID != "" && !ep.Status.IsFinal() {
+			if err := svc.mediaSvc.CancelJob(ctx, ep.MediaryID); err != nil {
+				svc.logger.WarnContext(ctx, "failed to cancel the mediary job of a deleted episode",
+					slog.String("episode_id", ep.ID), slog.String("mediary_id", ep.MediaryID), slog.Any("error", err))
+			}
+		}
 	}
 
 	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
@@ -1259,9 +1303,11 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 	var episodesSaveError error
 	feedsToPublish := make(map[string]bool)
+	var savedEpisodes []*Episode
 	for _, e := range episodesToSave {
 		fields := append(fields, slog.String("episode_id", e.ID))
 		if _, err := svc.repository.SaveEpisode(ctx, e); err == nil {
+			savedEpisodes = append(savedEpisodes, e)
 			if _, exists := epFeedsMap[e.ID]; exists {
 				for _, f := range epFeedsMap[e.ID] {
 					feedsToPublish[f] = true
@@ -1271,6 +1317,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			episodesSaveError = multierr.Append(episodesSaveError, telemetry.LogError(svc.logger, ctx, err, "failed to save episode", fields...))
 		}
 	}
+	// Before the feeds are made again, so that they have the covers.
+	svc.findCoversOfCompleteEpisodes(ctx, savedEpisodes)
 
 	feedIDs := make([]string, 0, len(feedsToPublish))
 	for f := range feedsToPublish {
@@ -1424,7 +1472,7 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 	}
 
 	objectKey := svc.constructS3FeedKey(feed.UserID, feed.ID)
-	feedReader, err := generateFeed(feed, episodes)
+	feedReader, err := generateFeed(feed, episodes, svc.publicURL)
 	if err != nil {
 		return telemetry.LogError(svc.logger, ctx, err, "failed to generate feed", fields...)
 	}

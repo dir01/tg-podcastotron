@@ -184,3 +184,14 @@ func TestGroupRequests(t *testing.T) {
 		t.Errorf("episodes of a = %v, want [9 10]", ids)
 	}
 }
+
+func TestRequestTitle(t *testing.T) {
+	torrent := &service.Request{SourceURL: "magnet:?xt=urn:btih:abc&dn=The+Book", Episodes: []*service.Episode{{Title: "Chapter 1"}}}
+	if got := torrent.Title(); got != "The Book" {
+		t.Errorf("torrent title = %q, want the name of the torrent", got)
+	}
+	video := &service.Request{SourceURL: "https://www.youtube.com/watch?v=x", Episodes: []*service.Episode{{Title: "A video"}}}
+	if got := video.Title(); got != "A video" {
+		t.Errorf("video title = %q, want the episode title", got)
+	}
+}

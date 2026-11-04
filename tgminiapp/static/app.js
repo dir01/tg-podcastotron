@@ -121,6 +121,8 @@
     setTimeout(syncBackButton, 0);
   });
   document.addEventListener('htmx:historyRestore', syncBackButton);
+  // A replaced entry (a filter, or the page after a finished step) is not a new screen.
+  document.addEventListener('htmx:replacedInHistory', syncBackButton);
   syncBackButton();
 
   // endregion
@@ -167,7 +169,7 @@
 
   // endregion
 
-  // region copy and share
+  // region copy, share and rename
 
   async function copyText(text) {
     try {
@@ -190,6 +192,17 @@
   }
 
   document.addEventListener('click', async (e) => {
+    const edit = e.target.closest('[data-edit-toggle]');
+    if (edit) {
+      const form = document.getElementById(edit.dataset.editToggle);
+      form.hidden = !form.hidden;
+      const input = form.querySelector('input[type=text]');
+      if (!form.hidden && input) {
+        input.focus();
+        input.select();
+      }
+      return;
+    }
     const copy = e.target.closest('[data-copy]');
     if (copy) {
       e.preventDefault();

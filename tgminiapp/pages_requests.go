@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,7 +20,7 @@ type homeData struct {
 	User     *User
 	Activity *activityData
 	Feeds    []feedSummary
-	Episodes int
+	Episodes totals
 	Now      time.Time
 }
 
@@ -40,7 +41,7 @@ type requestSummary struct {
 
 type feedSummary struct {
 	*service.Feed
-	Episodes int
+	Totals totals
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request, u *User) error {
@@ -53,15 +54,21 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, u *User) error {
 	if err != nil {
 		return err
 	}
-	counts := map[string]int{}
+	// An episode in two feeds counts in each of them.
+	byFeed := map[string]*totals{}
+	for _, f := range feeds.list {
+		byFeed[f.ID] = &totals{}
+	}
 	for _, ep := range episodes {
 		for _, id := range ep.FeedIDs {
-			counts[id]++
+			if t, ok := byFeed[id]; ok {
+				t.add(ep)
+			}
 		}
 	}
-	data := &homeData{User: u, Activity: activity(episodes, s.now()), Episodes: len(episodes), Now: s.now()}
+	data := &homeData{User: u, Activity: activity(episodes, s.now()), Episodes: sumEpisodes(episodes), Now: s.now()}
 	for _, f := range feeds.list {
-		data.Feeds = append(data.Feeds, feedSummary{Feed: f, Episodes: counts[f.ID]})
+		data.Feeds = append(data.Feeds, feedSummary{Feed: f, Totals: *byFeed[f.ID]})
 	}
 	return s.render(w, "home", data)
 }
@@ -96,23 +103,28 @@ func activity(episodes []*service.Episode, now time.Time) *activityData {
 // createLink saves a pasted link and opens the page to choose files.
 func (s *Server) createLink(w http.ResponseWriter, r *http.Request, u *User) error {
 	ctx := r.Context()
-	url := strings.TrimSpace(r.FormValue("url"))
-	if url == "" {
+	source := strings.TrimSpace(r.FormValue("url"))
+	if source == "" {
 		return badRequest("Paste a link first.")
 	}
-	valid, err := s.svc.IsValidURL(ctx, url)
+	valid, err := s.svc.IsValidURL(ctx, source)
 	if err != nil {
 		return fmt.Errorf("failed to check url: %w", err)
 	}
 	if !valid {
 		return badRequest("This link is not supported. Use a magnet link or a link to a video.")
 	}
-	link, err := s.svc.SaveSourceLink(ctx, u.ID, url)
+	link, err := s.svc.SaveSourceLink(ctx, u.ID, source)
 	if err != nil {
 		return err
 	}
 	s.metadata.start(ctx, link.URL)
-	navigate(w, "/new/"+link.ID)
+	path := "/new/" + link.ID
+	// A link pasted on a feed page makes episodes for that feed.
+	if feed := r.FormValue("feed"); feed != "" {
+		path += "?feed=" + url.QueryEscape(feed)
+	}
+	navigate(w, path)
 	return nil
 }
 
@@ -124,6 +136,7 @@ type newRequestData struct {
 
 type filesData struct {
 	Link     *service.SourceLink
+	Feed     string // the feed of the page where the link was pasted, or ""
 	Loading  bool
 	Error    string
 	Wait     int // number of polls so far
@@ -173,7 +186,7 @@ func (s *Server) newRequestFiles(w http.ResponseWriter, r *http.Request, u *User
 func (s *Server) filesData(r *http.Request, u *User, link *service.SourceLink) (*filesData, error) {
 	ctx := r.Context()
 	md, done, err := s.metadata.get(ctx, link.URL)
-	data := &filesData{Link: link}
+	data := &filesData{Link: link, Feed: r.URL.Query().Get("feed")}
 	switch {
 	case !done:
 		data.Loading = true
@@ -198,6 +211,10 @@ func (s *Server) filesData(r *http.Request, u *User, link *service.SourceLink) (
 	}
 	data.Feeds = feeds.list
 	data.Default = service.DefaultFeedID
+	if _, ok := feeds.byID[data.Feed]; ok {
+		data.Checked = []string{data.Feed}
+		return data, nil
+	}
 	data.Checked, err = s.lastUsedFeeds(r, u, feeds)
 	if err != nil {
 		return nil, err
@@ -268,8 +285,7 @@ func (s *Server) createRequest(w http.ResponseWriter, r *http.Request, u *User) 
 	if err != nil {
 		return err
 	}
-	navigate(w, "/requests/"+requestID)
-	return nil
+	return s.replacePage(w, r, "/requests/"+requestID)
 }
 
 // episodeVariants returns the files of each episode. The episodes, and the parts of
@@ -292,9 +308,10 @@ const requestWaitPolls = 90
 type requestData struct {
 	ID       string
 	Request  *service.Request
+	Totals   totals
 	Episodes []*episodeView
 	Bar      []barPart
-	Feeds    []*service.Feed // the feeds of the episodes
+	Feeds    *requestFeedsData
 	Ready    int
 	Failed   int
 	Wait     int
@@ -321,7 +338,88 @@ func (s *Server) requestProgress(w http.ResponseWriter, r *http.Request, u *User
 	if err != nil {
 		return err
 	}
+	// The page opened before the episodes existed, so it has no feeds section yet.
+	// Show all of the page now.
+	if r.URL.Query().Get("prep") == "1" && data.Request != nil {
+		w.Header().Set("HX-Retarget", "#main")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		return s.render(w, "request", data)
+	}
 	return s.partial(w, "request-progress", data)
+}
+
+// requestFeedsData is the feeds section of a link page. The progress card polls,
+// so this section is outside of it: a poll must not close it while the user uses it.
+type requestFeedsData struct {
+	ID       string
+	Finished bool
+	Total    int
+	Rows     []bulkFeedRow
+	AnyIn    bool
+	Open     bool
+}
+
+func newRequestFeedsData(req *service.Request, feeds *feedIndex, open bool) *requestFeedsData {
+	data := &requestFeedsData{ID: req.ID, Finished: req.Finished(), Total: len(req.Episodes), Open: open}
+	for _, f := range feeds.list {
+		row := bulkFeedRow{Feed: f}
+		for _, ep := range req.Episodes {
+			if slices.Contains(ep.FeedIDs, f.ID) {
+				row.In++
+			}
+		}
+		data.AnyIn = data.AnyIn || row.In > 0
+		data.Rows = append(data.Rows, row)
+	}
+	return data
+}
+
+// deleteRequest deletes all episodes of the link, also the episodes that are not finished.
+func (s *Server) deleteRequest(w http.ResponseWriter, r *http.Request, u *User) error {
+	ctx := r.Context()
+	req, err := s.svc.GetRequest(ctx, u.ID, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	if req == nil {
+		return notFound("Link")
+	}
+	ids := strings.Split(joinIDs(req.Episodes), ",")
+	if err := s.svc.DeleteEpisodes(ctx, u.ID, ids); err != nil {
+		return err
+	}
+	toast(w, "Deleted "+plural(len(ids), "episode", "episodes"))
+	return s.replacePage(w, r, "/")
+}
+
+// requestFeeds adds all episodes of the link to a feed, or removes them from it.
+func (s *Server) requestFeeds(w http.ResponseWriter, r *http.Request, u *User) error {
+	ctx := r.Context()
+	req, err := s.svc.GetRequest(ctx, u.ID, r.PathValue("id"))
+	if err != nil {
+		return err
+	}
+	if req == nil {
+		return notFound("Link")
+	}
+	ids := strings.Split(joinIDs(req.Episodes), ",")
+	feedID := r.FormValue("feed")
+	if r.FormValue("in") == "1" {
+		err = s.svc.AddEpisodesToFeeds(ctx, u.ID, ids, []string{feedID})
+	} else {
+		err = s.svc.RemoveEpisodesFromFeeds(ctx, u.ID, ids, []string{feedID})
+	}
+	if err != nil {
+		return err
+	}
+	if req, err = s.svc.GetRequest(ctx, u.ID, req.ID); err != nil || req == nil {
+		return err
+	}
+	feeds, err := s.feedIndex(ctx, u.ID)
+	if err != nil {
+		return err
+	}
+	return s.partial(w, "request-feeds", newRequestFeedsData(req, feeds, true))
 }
 
 func (s *Server) requestData(r *http.Request, u *User) (*requestData, error) {
@@ -339,16 +437,13 @@ func (s *Server) requestData(r *http.Request, u *User) (*requestData, error) {
 		return nil, err
 	}
 	data.Request = req
+	data.Totals = sumEpisodes(req.Episodes)
 	data.Bar = progressBar(req.Episodes)
 	data.Ready = req.Count(service.EpisodeStatusComplete)
 	data.Failed = req.Count(service.EpisodeStatusFailed)
 	if data.Episodes, err = s.episodeViews(ctx, u.ID, req.Episodes, feeds); err != nil {
 		return nil, err
 	}
-	for _, f := range feeds.list {
-		if slices.ContainsFunc(req.Episodes, func(ep *service.Episode) bool { return slices.Contains(ep.FeedIDs, f.ID) }) {
-			data.Feeds = append(data.Feeds, f)
-		}
-	}
+	data.Feeds = newRequestFeedsData(req, feeds, false)
 	return data, nil
 }

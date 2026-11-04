@@ -16,9 +16,16 @@ type Request struct {
 	Episodes  []*Episode // ordered by ID
 }
 
-// Title is the title of the source, for example the name of the torrent.
+// Title is the title of the source, for example the name of the torrent. A link
+// without a title in it (for example, a video link) gets the title of its first episode.
 func (r *Request) Title() string {
-	return TitleFromSourceURL(r.SourceURL)
+	if title := TitleFromSourceURL(r.SourceURL); title != "" {
+		return title
+	}
+	if len(r.Episodes) > 0 {
+		return r.Episodes[0].Title
+	}
+	return ""
 }
 
 // Finished tells if all episodes are complete or failed.

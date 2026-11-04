@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -37,9 +39,12 @@ func newQueueBackedService(t *testing.T, mediarySvc mediary.Service) (*service.S
 	}
 
 	queue := must(jobsqueue.New(db, 2, logger))(t)
+	// The episode files are on this server, so that the cover lookup stays offline. It has no files.
+	files := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(files.Close)
 	s3Store := &servicemocks.MockS3Store{
 		PreSignedURLFunc: func(key string) (string, error) { return "https://example.com/" + key + "?signed", nil },
-		URLFunc:          func(key string) (string, error) { return "https://example.com/" + key, nil },
+		URLFunc:          func(key string) (string, error) { return files.URL + "/" + key, nil },
 		DeleteFunc:       func(ctx context.Context, key string) error { return nil },
 		PutFunc: func(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*service.PutOptions)) error {
 			return nil

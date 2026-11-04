@@ -1,6 +1,6 @@
 {{/* The progress of a request. It polls until all episodes are finished. The argument is a *requestData. */}}
 {{define "request-progress"}}
-<div id="request-progress" {{if .Polling}}hx-get="/requests/{{.ID}}/progress?wait={{.Wait}}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{{end}}>
+<div id="request-progress" {{if .Polling}}hx-get="/requests/{{.ID}}/progress?wait={{.Wait}}{{if not .Request}}&amp;prep=1{{end}}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{{end}}>
 {{if not .Request}}
   {{if .Polling}}
   <div class="card loading-card">
@@ -23,33 +23,27 @@
       </div>
       {{template "bar" .Bar}}
       {{template "legend" .Bar}}
-      {{if .Feeds}}
-      <div class="goes-to">
-        <span class="hint">{{if .Request.Finished}}In{{else}}Goes to{{end}}</span>
-        {{range .Feeds}}<a class="chip chip-link{{if .IsPermanent}} chip-keep{{end}}" href="/feeds/{{.ID}}">{{.Title}}</a>{{end}}
-      </div>
-      {{end}}
     </div>
   </section>
 
   <section class="section">
-    <h3 class="section-header">
-      Episodes
-      {{if .Request.Finished}}<a class="link-btn" href="/episodes/bulk?ids={{joinIDs .Request.Episodes}}">Edit all</a>{{end}}
-    </h3>
+    <h3 class="section-header">Episodes</h3>
     <ul class="card list">
       {{range .Episodes}}
       <li>
-        <a class="row-link ep-progress" href="/episodes/{{.ID}}">
-          <span class="ep-title"><span class="ep-num">#{{.ID}}</span> {{.Title}}</span>
-          {{template "steps" .Steps}}
-          <span class="ep-meta">
-            <span class="pill st-{{.Stage.Class}}">{{.Stage.Label}}</span>
-            {{with .Attempt}}<span>attempt {{.}}</span>{{end}}
-            {{with duration .Duration}}<span>{{.}}</span>{{end}}
-            {{with bytes .FileLenBytes}}<span>{{.}}</span>{{end}}
+        <a class="row-link with-thumb top" href="/episodes/{{.ID}}">
+          {{template "thumb" .}}
+          <span class="ep-body">
+            <span class="ep-title"><span class="ep-num">#{{.ID}}</span> {{.Title}}</span>
+            {{template "steps" .Steps}}
+            <span class="ep-meta">
+              <span class="pill st-{{.Stage.Class}}">{{.Stage.Label}}</span>
+              {{with .Attempt}}<span>attempt {{.}}</span>{{end}}
+              {{with duration .Duration}}<span>{{.}}</span>{{end}}
+              {{with bytes .FileLenBytes}}<span>{{.}}</span>{{end}}
+            </span>
+            {{with .LastError}}<span class="ep-error">{{truncate . 200}}</span>{{end}}
           </span>
-          {{with .LastError}}<span class="ep-error">{{truncate . 200}}</span>{{end}}
         </a>
       </li>
       {{end}}
@@ -57,4 +51,32 @@
   </section>
 {{end}}
 </div>
+{{end}}
+
+{{/* The feeds of all episodes of a link. A tap opens switches that change them.
+     The argument is a *requestFeedsData. */}}
+{{define "request-feeds"}}
+<section id="request-feeds" class="section">
+  <details class="card feeds-edit" {{if .Open}}open{{end}}>
+    <summary>
+      <span class="hint">{{if .Finished}}In{{else}}Goes to{{end}}</span>
+      {{range .Rows}}{{if gt .In 0}}<span class="chip">{{if .IsPermanent}}{{template "keep-icon"}} {{end}}{{.Title}}{{if lt .In $.Total}} ({{.In}}/{{$.Total}}){{end}}</span>{{end}}{{end}}
+      {{if not .AnyIn}}<span class="chip chip-warn">No feed</span>{{end}}
+      <span class="link-btn edit-toggle"><span class="when-closed">Change</span><span class="when-open">Done</span></span>
+    </summary>
+    <div class="list">
+      {{range .Rows}}
+      <label class="row switch-row">
+        <span class="row-text">
+          <span class="row-title">{{.Title}}</span>
+          <span class="row-sub">{{if and (gt .In 0) (lt .In $.Total)}}{{.In}} of {{$.Total}} episodes · {{end}}{{template "keep-text" .}}</span>
+        </span>
+        <input class="switch" type="checkbox" name="in" value="1" {{if eq .In $.Total}}checked{{end}}
+          hx-post="/requests/{{$.ID}}/feeds" hx-vals='{"feed": "{{.ID}}"}' hx-target="#request-feeds" hx-swap="outerHTML">
+      </label>
+      {{end}}
+      <p class="row row-sub">The switches change the feeds of all {{plural $.Total "episode" "episodes"}} from this link.</p>
+    </div>
+  </details>
+</section>
 {{end}}

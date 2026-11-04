@@ -40,6 +40,8 @@ func TestService(t *testing.T) {
 
 	jobsQueue := must(jobsqueue.New(db, 1, logger))(t)
 	mockedMediary := &mediarymocks.ServiceMock{
+		// Deleting an episode that is not finished cancels its mediary job.
+		CancelJobFunc: func(ctx context.Context, jobID string) error { return nil },
 		CreateUploadJobFunc: func(ctx context.Context, params *mediary.CreateUploadJobParams) (string, error) {
 			return "some-job-id", nil
 		},

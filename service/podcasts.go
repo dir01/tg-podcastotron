@@ -9,7 +9,9 @@ import (
 	"github.com/jbub/podcasts"
 )
 
-func generateFeed(feed *Feed, episodes []*Episode) (io.ReadSeeker, error) {
+// generateFeed makes the RSS of the feed. publicURL is the URL of the Mini App,
+// which serves the covers. Without it, the items have no covers.
+func generateFeed(feed *Feed, episodes []*Episode, publicURL string) (io.ReadSeeker, error) {
 	p := &podcasts.Podcast{
 		Title: feed.Title,
 	}
@@ -18,7 +20,12 @@ func generateFeed(feed *Feed, episodes []*Episode) (io.ReadSeeker, error) {
 		if !hasFile(e) {
 			continue
 		}
+		var image *podcasts.ItunesImage
+		if publicURL != "" && e.CoverPath() != "" {
+			image = &podcasts.ItunesImage{Href: publicURL + e.CoverPath()}
+		}
 		p.AddItem(&podcasts.Item{
+			Image:    image,
 			Title:    fmt.Sprintf("%s (#%s)", e.Title, e.ID),
 			GUID:     e.ID,
 			PubDate:  podcasts.NewPubDate(e.CreatedAt),

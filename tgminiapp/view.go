@@ -231,6 +231,40 @@ func truncate(s string, n int) string {
 	return string(r[:n-1]) + "…"
 }
 
+// totals is the number, the total length and the total size of some episodes.
+type totals struct {
+	Count    int
+	Duration time.Duration
+	Bytes    int64
+}
+
+func (t *totals) add(ep *service.Episode) {
+	t.Count++
+	t.Duration += ep.Duration
+	t.Bytes += ep.FileLenBytes
+}
+
+func sumEpisodes(episodes []*service.Episode) totals {
+	var t totals
+	for _, ep := range episodes {
+		t.add(ep)
+	}
+	return t
+}
+
+// String is for example "12 episodes · 9 h 30 min · 1.2 GB". It has no length or
+// size when they are not known.
+func (t totals) String() string {
+	parts := []string{plural(t.Count, "episode", "episodes")}
+	if d := humanDuration(t.Duration); d != "" {
+		parts = append(parts, d)
+	}
+	if b := humanBytes(t.Bytes); b != "" {
+		parts = append(parts, b)
+	}
+	return strings.Join(parts, " · ")
+}
+
 func joinIDs(episodes []*service.Episode) string {
 	ids := make([]string, len(episodes))
 	for i, ep := range episodes {

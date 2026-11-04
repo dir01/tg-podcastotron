@@ -2,19 +2,25 @@
 {{template "feed-title" .}}
 
 <section class="section">
-  <h3 class="section-header">Subscribe</h3>
-  <div class="card subscribe">
-    <code class="mono select-all">{{.Feed.URL}}</code>
-    <button type="button" class="btn btn-primary btn-wide" data-copy="{{.Feed.URL}}">Copy the feed link</button>
-  </div>
-  <p class="section-footer">Add this link to your podcast app as a new podcast “by URL”.</p>
+  <form class="card paste-form" hx-post="/links" hx-swap="none">
+    <input type="hidden" name="feed" value="{{.Feed.ID}}">
+    <input class="input" type="text" name="url" inputmode="url" autocomplete="off" placeholder="Paste a magnet link or a video link" required>
+    <button class="btn btn-primary" type="submit">Add</button>
+  </form>
+  <p class="section-footer">The new episodes go to this feed.</p>
+</section>
+
+<section class="section">
+  <h3 class="section-header">Feed link</h3>
+  <div class="card">{{template "link-box" .Feed.URL}}</div>
+  <p class="section-footer">To subscribe, add this link to your podcast app as a podcast “by URL”.</p>
 </section>
 
 {{template "feed-body" .}}
 
 <section class="section">
   <div class="card list">
-    <button class="row link-row" hx-post="/feeds/{{.Feed.ID}}/regenerate" hx-swap="none">Make the feed file again</button>
+    <button class="row link-row" hx-post="/feeds/{{.Feed.ID}}/regenerate" hx-swap="none">Refresh the feed</button>
     {{if not .IsDefault}}
     <button class="row danger-row" hx-post="/feeds/{{.Feed.ID}}/delete" hx-swap="none"
       hx-confirm="Delete the feed “{{.Feed.Title}}”? Its episodes stay in your library.">Delete feed</button>

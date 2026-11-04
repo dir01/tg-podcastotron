@@ -10,6 +10,7 @@ import (
 
 type feedData struct {
 	Feed      *service.Feed
+	Totals    totals
 	IsDefault bool
 	Episodes  []*episodeView
 	Now       time.Time
@@ -41,7 +42,7 @@ func (s *Server) feedData(r *http.Request, u *User) (*feedData, error) {
 	if err != nil {
 		return nil, err
 	}
-	data := &feedData{Feed: feed, IsDefault: feed.ID == service.DefaultFeedID, Now: s.now()}
+	data := &feedData{Feed: feed, Totals: sumEpisodes(episodes), IsDefault: feed.ID == service.DefaultFeedID, Now: s.now()}
 	if data.Episodes, err = s.episodeViews(ctx, u.ID, episodes, feeds); err != nil {
 		return nil, err
 	}
@@ -69,8 +70,7 @@ func (s *Server) createFeed(w http.ResponseWriter, r *http.Request, u *User) err
 	if err != nil {
 		return err
 	}
-	navigate(w, "/feeds/"+feed.ID)
-	return nil
+	return s.replacePage(w, r, "/feeds/"+feed.ID)
 }
 
 func (s *Server) renameFeed(w http.ResponseWriter, r *http.Request, u *User) error {
@@ -116,7 +116,7 @@ func (s *Server) regenerateFeed(w http.ResponseWriter, r *http.Request, u *User)
 	if err := s.svc.RegenerateFeed(r.Context(), u.ID, feed.ID); err != nil {
 		return err
 	}
-	toast(w, "The feed file will be made again in a few seconds")
+	toast(w, "The feed will refresh in a few seconds")
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
@@ -156,6 +156,5 @@ func (s *Server) deleteFeed(w http.ResponseWriter, r *http.Request, u *User) err
 	} else {
 		toast(w, "Feed deleted. Its episodes are still in your library")
 	}
-	navigate(w, "/")
-	return nil
+	return s.replacePage(w, r, "/")
 }
