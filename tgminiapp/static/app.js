@@ -160,7 +160,12 @@
       sb.hide();
       return;
     }
-    sb.setParams({ text: form.dataset.secondaryButton, position: 'top', is_active: true, is_visible: true });
+    // The two buttons are equally important: they have the same colors and stand side by side.
+    const colors = {};
+    if (tg.themeParams.button_color) colors.color = tg.themeParams.button_color;
+    if (tg.themeParams.button_text_color) colors.text_color = tg.themeParams.button_text_color;
+    mb.setParams(colors);
+    sb.setParams({ ...colors, text: form.dataset.secondaryButton, position: 'right', is_active: true, is_visible: true });
   }
 
   function submitWith(button, selector) {
@@ -330,7 +335,7 @@
         renderOrder();
       }
 
-      // With two or more files, the secondary button joins them into one episode.
+      // With two or more files, a second button joins them into one episode.
       const label = count === 0 ? 'Choose files' : count === 1 ? 'Create 1 episode' : 'Create ' + count + ' episodes';
       form.dataset.mainButton = label;
       form.dataset.mainButtonDisabled = count === 0 ? 'true' : 'false';

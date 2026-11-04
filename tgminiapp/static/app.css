@@ -216,6 +216,8 @@ input[type=checkbox], input[type=radio] {
 .paste-form, .inline-form, .rename-form { display: flex; gap: 8px; align-items: center; }
 
 .actions { margin: 0 var(--gap) 20px; }
+.actions-row { display: flex; gap: 8px; }
+.actions-row .btn-wide { width: auto; flex: 1 1 0; }
 .in-telegram .fallback-only { display: none !important; }
 
 .select-all { user-select: all; -webkit-user-select: all; word-break: break-all; display: block; }
