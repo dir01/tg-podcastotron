@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,6 +41,9 @@ func newQueueBackedService(t *testing.T, mediarySvc mediary.Service) (*service.S
 		PreSignedURLFunc: func(key string) (string, error) { return "https://example.com/" + key + "?signed", nil },
 		URLFunc:          func(key string) (string, error) { return "https://example.com/" + key, nil },
 		DeleteFunc:       func(ctx context.Context, key string) error { return nil },
+		PutFunc: func(ctx context.Context, key string, dataReader io.ReadSeeker, opts ...func(*service.PutOptions)) error {
+			return nil
+		},
 	}
 
 	repo := service.NewSqliteRepository(db, db)
@@ -113,7 +117,7 @@ func TestCreateEpisodesAsync_FailingVariantIsRetriedWithoutDuplicatingOthers(t *
 	svc, repo, _ := newQueueBackedService(t, mediaryMock)
 	userID := "user-1"
 
-	if err := svc.CreateEpisodesAsync(ctx, userID, "magnet:?xt=urn:btih:abc&dn=Book", variantsPerEpisode, service.ProcessingTypeConcatenate); err != nil {
+	if _, err := svc.CreateEpisodesAsync(ctx, userID, "magnet:?xt=urn:btih:abc&dn=Book", variantsPerEpisode, service.ProcessingTypeConcatenate, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -200,7 +204,7 @@ func TestCreateEpisodesAsync_SameRequestTwiceIsIdempotent(t *testing.T) {
 
 	// Two separate requests for the same content: separate episodes and separate files.
 	for i := 0; i < 2; i++ {
-		if err := svc.CreateEpisodesAsync(ctx, userID, "magnet:?xt=urn:btih:abc", variants, service.ProcessingTypeConcatenate); err != nil {
+		if _, err := svc.CreateEpisodesAsync(ctx, userID, "magnet:?xt=urn:btih:abc", variants, service.ProcessingTypeConcatenate, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

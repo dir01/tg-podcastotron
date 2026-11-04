@@ -1,0 +1,34 @@
+{{/* The argument is a *bulkData. */}}
+{{define "bulk-titles"}}
+<section id="bulk-titles" class="section">
+  <details class="card" {{if le (len .Episodes) 10}}open{{end}}>
+    <summary class="row"><span class="row-title">{{plural (len .Episodes) "episode" "episodes"}}</span></summary>
+    <ul class="list compact">
+      {{range .Episodes}}<li class="row"><span class="ep-num">#{{.ID}}</span> {{.Title}}</li>{{end}}
+    </ul>
+  </details>
+</section>
+{{end}}
+
+{{/* The argument is a *bulkFeedsData. */}}
+{{define "bulk-feeds"}}
+<section id="bulk-feeds" class="section">
+  <h3 class="section-header">Feeds</h3>
+  <ul class="card list">
+    {{range .Rows}}
+    <li class="row">
+      <span class="row-text">
+        <span class="row-title">{{.Title}}</span>
+        <span class="row-sub">
+          {{if eq .In $.Total}}All are in this feed{{else if eq .In 0}}None are in this feed{{else}}{{.In}} of {{$.Total}} are in this feed{{end}}
+        </span>
+      </span>
+      <span class="row-actions">
+        {{if lt .In $.Total}}<button class="btn btn-small" hx-post="/episodes/bulk/feeds" hx-vals='{"ids": "{{$.IDs}}", "feed": "{{.ID}}", "action": "add"}' hx-target="#bulk-feeds" hx-swap="outerHTML">Add</button>{{end}}
+        {{if gt .In 0}}<button class="btn btn-small" hx-post="/episodes/bulk/feeds" hx-vals='{"ids": "{{$.IDs}}", "feed": "{{.ID}}", "action": "remove"}' hx-target="#bulk-feeds" hx-swap="outerHTML">Remove</button>{{end}}
+      </span>
+    </li>
+    {{end}}
+  </ul>
+</section>
+{{end}}

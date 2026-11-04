@@ -1,0 +1,54 @@
+{{/* The argument is an *inviteData. */}}
+{{define "invite"}}
+<div class="card invite">
+  <code class="mono select-all">{{.Link}}</code>
+  <div class="row-actions">
+    <button type="button" class="btn btn-small" data-copy="{{.Link}}">Copy</button>
+    <button type="button" class="btn btn-small btn-primary" data-share="{{.Link}}" data-share-text="Join me on Podcast-O-Tron">Share</button>
+  </div>
+  <p class="hint">The link works one time, for {{duration .Expires}}.</p>
+</div>
+{{end}}
+
+{{/* The argument is a *gcReportData. */}}
+{{define "gc-report"}}
+<div id="gc" class="card gc-report">
+  <p>Scanned {{.Report.ScannedObjects}} episode files, {{bytes .Report.ScannedBytes}}.</p>
+  {{if .Report.Garbage}}
+    <p><b>{{len .Report.Garbage}} files, {{bytes .Report.GarbageBytes}}</b> belong to no episode and are older than {{duration .Grace}}.</p>
+    <ul class="list compact">
+      {{range .Report.ByOwner}}
+      <li class="row">
+        <span class="row-text">
+          <span class="row-title">{{if .UserID}}User {{.UserID}}{{else}}Unknown user{{end}} <code class="mono">{{truncate .KeyPrefix 9}}</code></span>
+          <span class="row-sub">{{.Count}} files, {{bytes .Bytes}}, {{.Oldest.Format "2006-01-02"}} – {{.Newest.Format "2006-01-02"}}</span>
+        </span>
+      </li>
+      {{end}}
+    </ul>
+    <button class="btn btn-danger btn-wide" hx-post="/admin/gc/delete" hx-vals='{"token": "{{.Token}}"}' hx-target="#gc" hx-swap="outerHTML"
+      hx-confirm="Delete {{len .Report.Garbage}} files ({{bytes .Report.GarbageBytes}})? You cannot undo this.">Delete {{len .Report.Garbage}} files</button>
+  {{else}}
+    <p>No garbage: each file older than {{duration .Grace}} belongs to an episode.</p>
+  {{end}}
+  {{if .Report.Missing}}
+    <p class="text-danger">{{len .Report.Missing}} complete episodes have no file. This is only a report: the cleanup does not fix it.</p>
+    <ul class="list compact">
+      {{range .Report.Missing}}
+      <li class="row"><span class="row-text"><span class="row-title">User {{.Episode.UserID}}, #{{.Episode.ID}} {{truncate .Episode.Title 60}}</span><span class="row-sub">{{with .FeedIDs}}feeds {{range $i, $f := .}}{{if $i}}, {{end}}{{$f}}{{end}}{{else}}no feed{{end}}</span></span></li>
+      {{end}}
+    </ul>
+  {{end}}
+</div>
+{{end}}
+
+{{/* The argument is a *gcResultData. */}}
+{{define "gc-result"}}
+<div id="gc" class="card">
+  {{if .Expired}}
+    <p>This scan expired or was already used. Scan again.</p>
+  {{else}}
+    <p>Deleted {{.Deleted}} of {{.Total}} files ({{bytes .Bytes}}).{{if lt .Deleted .Total}} The other files are not garbage now.{{end}}</p>
+  {{end}}
+</div>
+{{end}}

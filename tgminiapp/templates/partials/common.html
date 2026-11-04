@@ -1,0 +1,52 @@
+{{define "no-access"}}
+<div class="empty">
+  {{if eq .Reason "no-access"}}
+    <div class="empty-icon">🔒</div>
+    <h2>You have no access yet</h2>
+    <p>Ask the admin for an invite link.</p>
+  {{else if eq .Reason "not-telegram"}}
+    <div class="empty-icon">📱</div>
+    <h2>Open this app from Telegram</h2>
+    <p>Tap the menu button in the chat with the bot.</p>
+  {{else if eq .Reason "expired"}}
+    <div class="empty-icon">⏳</div>
+    <h2>This session expired</h2>
+    <p>Close the app and open it again.</p>
+  {{else if eq .Reason "error"}}
+    <div class="empty-icon">⚠️</div>
+    <h2>Something went wrong</h2>
+    <p>Try again later.</p>
+  {{else}}
+    <div class="empty-icon">🔑</div>
+    <h2>Could not check who you are</h2>
+    <p>Close the app and open it again.</p>
+  {{end}}
+</div>
+{{end}}
+
+{{/* A progress bar. The argument is a []barPart. */}}
+{{define "bar"}}
+<div class="bar" role="img" aria-label="{{range $i, $p := .}}{{if $i}}, {{end}}{{$p.Count}} {{$p.Label}}{{end}}">
+  {{range .}}<span class="bar-part st-{{.Class}}" style="width: {{printf "%.2f" .Percent}}%"></span>{{end}}
+</div>
+{{end}}
+
+{{define "legend"}}
+<ul class="legend">
+  {{range .}}<li><span class="dot st-{{.Class}}"></span>{{.Count}} {{.Label}}</li>{{end}}
+</ul>
+{{end}}
+
+{{/* The steps of one episode. The argument is a []step. */}}
+{{define "steps"}}
+<ol class="steps">
+  {{range .}}<li class="step step-{{.State}}"><span class="step-dot"></span><span class="step-label">{{.Label}}</span></li>{{end}}
+</ol>
+{{end}}
+
+{{/* The feeds of an episode as chips, and the time until it is deleted. The argument is an *episodeView. */}}
+{{define "feed-chips"}}
+<span class="chips">
+  {{range .Feeds}}<span class="chip{{if .IsPermanent}} chip-keep{{end}}">{{.Title}}</span>{{else}}<span class="chip chip-warn">No feed</span>{{end}}
+</span>
+{{end}}

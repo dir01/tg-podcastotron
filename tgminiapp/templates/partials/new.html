@@ -1,0 +1,120 @@
+{{/* The file list and the options of a new request. It polls until the file list is known. */}}
+{{define "new-files"}}
+{{if .Loading}}
+<div class="card loading-card" hx-get="/new/{{.Link.ID}}/files?wait={{.Wait}}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">
+  <span class="spinner"></span>
+  <p>Getting the file list…</p>
+  {{if gt .Wait 5}}<p class="hint">For a torrent, this can take a few minutes. You can close the app: the link stays here.</p>{{end}}
+</div>
+{{else if .Error}}
+<div class="card empty">
+  <div class="empty-icon">⚠️</div>
+  <p>{{.Error}}</p>
+  <button class="btn" hx-get="/new/{{.Link.ID}}/files" hx-target="closest .card" hx-swap="outerHTML">Try again</button>
+</div>
+{{else}}
+<form id="new-form" class="new-form" hx-post="/new/{{.Link.ID}}" hx-swap="none" data-main-button="Create episodes" data-new-form>
+  {{if .Torrent}}
+  <section class="section">
+    <h3 class="section-header">Files</h3>
+    <div class="card tree" data-tree>
+      {{template "tree-actions" .Tree}}
+      {{template "tree-node" .Tree}}
+    </div>
+    {{/* The script puts the selected files here, in the order of selection. */}}
+    <div data-file-inputs hidden></div>
+    <p class="section-footer"><span data-selected-count>0</span> selected · <span data-selected-size>0 MB</span></p>
+    <details class="order" data-order hidden>
+      <summary class="section-footer">Show the order</summary>
+      <ol class="card order-list" data-order-list></ol>
+    </details>
+  </section>
+
+  <section class="section" data-mode-section hidden>
+    <h3 class="section-header">Episodes</h3>
+    <div class="card list">
+      <label class="row radio-row">
+        <input type="radio" name="mode" value="separate" checked>
+        <span class="row-text"><span class="row-title">One episode for each file</span><span class="row-sub" data-separate-label></span></span>
+      </label>
+      <label class="row radio-row">
+        <input type="radio" name="mode" value="join">
+        <span class="row-text"><span class="row-title">Join the files into one episode</span><span class="row-sub">In the order that you selected them</span></span>
+      </label>
+    </div>
+  </section>
+  {{else}}
+  <section class="section">
+    <h3 class="section-header">Format</h3>
+    <div class="card list">
+      {{range $i, $v := .Metadata.Variants}}
+      <label class="row radio-row">
+        <input type="radio" name="file" value="{{$v.ID}}" {{if eq $i 0}}checked{{end}}>
+        <span class="row-text"><span class="row-title">{{$v.ID}}</span>{{with $v.LenBytes}}<span class="row-sub">{{bytes .}}</span>{{end}}</span>
+      </label>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+
+  <section class="section">
+    <h3 class="section-header">Add to feeds</h3>
+    <div class="card list">
+      {{range .Feeds}}
+      <label class="row check-row">
+        <input type="checkbox" name="feed" value="{{.ID}}" {{if contains $.Checked .ID}}checked{{end}}>
+        <span class="row-text">
+          <span class="row-title">{{.Title}}</span>
+          <span class="row-sub">{{if .IsPermanent}}Keeps episodes{{else}}Deletes episodes after 30 days{{end}}</span>
+        </span>
+      </label>
+      {{end}}
+      <div class="row">
+        <input class="input" type="text" name="new_feed" placeholder="+ New feed name" autocomplete="off">
+      </div>
+    </div>
+    <p class="section-footer">You can change the feeds of each episode later.</p>
+  </section>
+
+  <div class="actions fallback-only">
+    <button class="btn btn-primary btn-wide" type="submit" data-submit-label>Create episodes</button>
+  </div>
+</form>
+{{end}}
+{{end}}
+
+{{/* The buttons that select files of a folder. The argument is a *fileNode. */}}
+{{define "tree-actions"}}
+{{if .ShowActions}}
+<div class="tree-actions">
+  {{if .ShowExt}}<button type="button" class="link-btn" data-select="ext" data-ext="{{.TopExt}}">All .{{.TopExt}} ({{.TopExtCount}})</button>{{end}}
+  <button type="button" class="link-btn" data-select="all">All ({{.Files}})</button>
+  <button type="button" class="link-btn" data-select="none">None</button>
+</div>
+{{end}}
+{{end}}
+
+{{/* The children of a folder in the file tree. The argument is a *fileNode. */}}
+{{define "tree-node"}}
+{{range .Children}}
+  {{if .IsFile}}
+  <label class="tree-file">
+    <input type="checkbox" data-file value="{{.Path}}" data-size="{{.Size}}">
+    <span class="tree-name">{{.Name}}</span>
+    <span class="tree-meta">{{bytes .Size}}</span>
+  </label>
+  {{else}}
+  <details class="tree-folder">
+    <summary>
+      <input type="checkbox" class="folder-check" aria-label="Select the folder {{.Name}}">
+      <span class="tree-name">📁 {{.Name}}</span>
+      <span class="tree-meta">{{.Files}} · {{bytes .Size}}</span>
+    </summary>
+    <div class="tree-children">
+      {{template "tree-actions" .}}
+      {{template "tree-node" .}}
+    </div>
+  </details>
+  {{end}}
+{{end}}
+{{end}}

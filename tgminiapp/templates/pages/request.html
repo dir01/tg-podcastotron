@@ -1,0 +1,11 @@
+{{define "page"}}
+<header class="page-header">
+  {{with .Request}}
+  <h1>{{with .Title}}{{.}}{{else}}Episodes{{end}}</h1>
+  <p class="hint">Started {{ago .CreatedAt $.Now}} · {{plural (len .Episodes) "episode" "episodes"}}</p>
+  {{else}}
+  <h1>New episodes</h1>
+  {{end}}
+</header>
+{{template "request-progress" .}}
+{{end}}

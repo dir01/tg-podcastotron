@@ -33,4 +33,7 @@ COPY --from=builder /build/bin/sql-migrate /usr/local/bin/sql-migrate
 COPY --from=builder /build/Makefile ./Makefile
 COPY --from=builder /build/db/migrations ./db/migrations
 
+# The Mini App HTTP server (HTTP_ADDR)
+EXPOSE 8080
+
 CMD ["/bin/bot"]

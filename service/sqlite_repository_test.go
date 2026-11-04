@@ -243,6 +243,9 @@ func TestSqliteRepository__Episodes(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Loaded episodes have the feeds of their publications.
+	episode1.FeedIDs = []string{"some-feed-id", "some-other-feed-id"}
+	episode2.FeedIDs = []string{"some-feed-id", "some-other-feed-id"}
 	// endregion
 
 	// region get episodes map - only those 2 should be returned

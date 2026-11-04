@@ -28,6 +28,9 @@ type CreateEpisodesQueuePayload struct {
 	VariantsPerEpisode [][]string
 	UserID             string
 	ProcessingType     ProcessingType
+	// FeedIDs are the feeds that get the episodes. Payloads enqueued before it existed
+	// have it empty; the default feed gets their episodes, as before.
+	FeedIDs []string `json:",omitempty"`
 }
 
 type PollEpisodesStatusQueuePayload struct {

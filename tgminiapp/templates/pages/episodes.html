@@ -1,0 +1,27 @@
+{{define "page"}}
+<header class="page-header">
+  <h1>Episodes</h1>
+</header>
+
+<nav class="tabs" aria-label="Filter">
+  {{range .Filters}}<a class="tab{{if eq .Key $.Filter}} tab-active{{end}}" href="/episodes{{if ne .Key "all"}}?show={{.Key}}{{end}}">{{.Label}}</a>{{end}}
+</nav>
+
+{{if .Episodes}}
+<form id="select-form" hx-get="/episodes/bulk" hx-target="#main" hx-push-url="true" data-selection data-main-button="Edit selected">
+  <ul class="card list selectable">
+    {{template "episode-rows" .}}
+  </ul>
+  <div class="selection-bar" data-selection-bar hidden>
+    <span><span data-selection-count>0</span> selected</span>
+    <button type="button" class="link-btn" data-select-all>Select all</button>
+    <button type="submit" class="btn btn-primary btn-small fallback-only">Edit</button>
+  </div>
+</form>
+{{else}}
+<div class="card empty">
+  <div class="empty-icon">🎧</div>
+  <p>{{if eq .Filter "all"}}No episodes yet. Send a link to the bot, or paste it on the home page.{{else}}No episodes here.{{end}}</p>
+</div>
+{{end}}
+{{end}}

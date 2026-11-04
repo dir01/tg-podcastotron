@@ -1,0 +1,27 @@
+{{define "page"}}
+{{template "feed-title" .}}
+
+<section class="section">
+  <h3 class="section-header">Subscribe</h3>
+  <div class="card subscribe">
+    <code class="mono select-all">{{.Feed.URL}}</code>
+    <button type="button" class="btn btn-primary btn-wide" data-copy="{{.Feed.URL}}">Copy the feed link</button>
+  </div>
+  <p class="section-footer">Add this link to your podcast app as a new podcast “by URL”.</p>
+</section>
+
+{{template "feed-body" .}}
+
+<section class="section">
+  <div class="card list">
+    <button class="row link-row" hx-post="/feeds/{{.Feed.ID}}/regenerate" hx-swap="none">Make the feed file again</button>
+    {{if not .IsDefault}}
+    <button class="row danger-row" hx-post="/feeds/{{.Feed.ID}}/delete" hx-swap="none"
+      hx-confirm="Delete the feed “{{.Feed.Title}}”? Its episodes stay in your library.">Delete feed</button>
+    <button class="row danger-row" hx-post="/feeds/{{.Feed.ID}}/delete" hx-vals='{"with_episodes": "1"}' hx-swap="none"
+      hx-confirm="Delete the feed “{{.Feed.Title}}” and all its episodes? You cannot undo this.">Delete feed and its episodes</button>
+    {{end}}
+  </div>
+  {{if .IsDefault}}<p class="section-footer">This is your default feed. You cannot delete it.</p>{{end}}
+</section>
+{{end}}

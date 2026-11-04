@@ -4,12 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
-
-	"net/http"
 
 	"github.com/XSAM/otelsql"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -28,6 +29,7 @@ import (
 	"tg-podcastotron/service"
 	jobsqueue "tg-podcastotron/service/jobs_queue"
 	"tg-podcastotron/telemetry"
+	"tg-podcastotron/tgminiapp"
 )
 
 func main() {
@@ -78,6 +80,11 @@ func main() {
 	awsSecretAccessKey := mustGetEnv("AWS_SECRET_ACCESS_KEY")
 	awsBucketName := mustGetEnv("AWS_BUCKET_NAME")
 	userPathSecret := mustGetEnv("USER_PATH_SECRET") // just some random string, we'll use it to salt user id and take a hash as part of the path
+	miniAppURL := strings.TrimRight(mustGetEnv("TG_MINI_APP_URL"), "/")
+	httpAddr := os.Getenv("HTTP_ADDR")
+	if httpAddr == "" {
+		httpAddr = ":8080"
+	}
 	defaultFeedTitle := os.Getenv("DEFAULT_FEED_TITLE")
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
@@ -178,10 +185,58 @@ func main() {
 
 	botStore := bot.NewSqliteRepository(db)
 	authRepo := auth.NewSqliteRepository(db)
-	botAuthService := auth.New(adminUsername, authRepo, logger)
-	ubot := bot.NewUndercastBot(botToken, botAuthService, botStore, svc, logger)
-	if err := ubot.Start(ctx); err != nil {
-		logger.ErrorContext(ctx, "error starting bot", slog.Any("error", err))
+	authService := auth.New(adminUsername, authRepo, logger)
+
+	// The bot gets links before the Mini App exists; it uses the Mini App only after Start.
+	var miniApp *tgminiapp.Server
+	ubot, err := bot.NewUndercastBot(bot.Config{
+		Token:      botToken,
+		MiniAppURL: miniAppURL,
+		Prefetch:   func(ctx context.Context, url string) { miniApp.Prefetch(ctx, url) },
+	}, authService, botStore, svc, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "error creating bot", slog.Any("error", err))
 		os.Exit(1)
 	}
+	botUsername, err := ubot.Username(ctx)
+	if err != nil {
+		logger.ErrorContext(ctx, "error getting bot username", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	// region mini app
+	miniAppConfig := tgminiapp.Config{BotToken: botToken, BotUsername: botUsername}
+	if devUserID := os.Getenv("TG_MINI_APP_DEV_USER_ID"); devUserID != "" && os.Getenv("ENVIRONMENT") != "production" {
+		// Lets a normal browser open the Mini App as this user. Never in production.
+		miniAppConfig.DevUser = &tgminiapp.DevUser{ID: devUserID, Username: os.Getenv("TG_MINI_APP_DEV_USERNAME")}
+		logger.WarnContext(ctx, "mini app accepts requests without telegram init data", slog.String("dev_user_id", devUserID))
+	}
+	miniApp, err = tgminiapp.New(miniAppConfig, svc, authService, logger)
+	if err != nil {
+		logger.ErrorContext(ctx, "error creating mini app", slog.Any("error", err))
+		os.Exit(1)
+	}
+	httpServer := &http.Server{
+		Addr:              httpAddr,
+		Handler:           otelhttp.NewHandler(miniApp.Handler(), "tgminiapp"),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		logger.InfoContext(ctx, "mini app listening", slog.String("addr", httpAddr), slog.String("url", miniAppURL))
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.ErrorContext(ctx, "mini app server failed", slog.Any("error", err))
+			cancel()
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelShutdown()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}()
+	// endregion
+
+	statusChanges := svc.Start(ctx)
+	go svc.RunExpiredEpisodesCleanup(ctx, time.NewTicker(24*time.Hour).C)
+	ubot.Start(ctx, statusChanges)
 }

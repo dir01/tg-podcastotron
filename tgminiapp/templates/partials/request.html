@@ -1,0 +1,60 @@
+{{/* The progress of a request. It polls until all episodes are finished. The argument is a *requestData. */}}
+{{define "request-progress"}}
+<div id="request-progress" {{if .Polling}}hx-get="/requests/{{.ID}}/progress?wait={{.Wait}}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{{end}}>
+{{if not .Request}}
+  {{if .Polling}}
+  <div class="card loading-card">
+    <span class="spinner"></span>
+    <p>Preparing the episodes…</p>
+  </div>
+  {{else}}
+  <div class="card empty">
+    <div class="empty-icon">🤷</div>
+    <p>This request has no episodes. They were maybe deleted, or the request failed.</p>
+    <a class="btn" href="/">Go home</a>
+  </div>
+  {{end}}
+{{else}}
+  <section class="section">
+    <div class="card summary">
+      <div class="summary-numbers">
+        <span class="big">{{.Ready}}<span class="of"> of {{len .Request.Episodes}}</span></span>
+        <span class="summary-label">{{if .Request.Finished}}{{if .Failed}}finished, {{.Failed}} failed{{else}}ready{{end}}{{else}}ready{{end}}</span>
+      </div>
+      {{template "bar" .Bar}}
+      {{template "legend" .Bar}}
+      {{if .Feeds}}
+      <div class="goes-to">
+        <span class="hint">{{if .Request.Finished}}In{{else}}Goes to{{end}}</span>
+        {{range .Feeds}}<a class="chip chip-link{{if .IsPermanent}} chip-keep{{end}}" href="/feeds/{{.ID}}">{{.Title}}</a>{{end}}
+      </div>
+      {{end}}
+    </div>
+  </section>
+
+  <section class="section">
+    <h3 class="section-header">
+      Episodes
+      {{if .Request.Finished}}<a class="link-btn" href="/episodes/bulk?ids={{joinIDs .Request.Episodes}}">Edit all</a>{{end}}
+    </h3>
+    <ul class="card list">
+      {{range .Episodes}}
+      <li>
+        <a class="row-link ep-progress" href="/episodes/{{.ID}}">
+          <span class="ep-title"><span class="ep-num">#{{.ID}}</span> {{.Title}}</span>
+          {{template "steps" .Steps}}
+          <span class="ep-meta">
+            <span class="pill st-{{.Stage.Class}}">{{.Stage.Label}}</span>
+            {{with .Attempt}}<span>attempt {{.}}</span>{{end}}
+            {{with duration .Duration}}<span>{{.}}</span>{{end}}
+            {{with bytes .FileLenBytes}}<span>{{.}}</span>{{end}}
+          </span>
+          {{with .LastError}}<span class="ep-error">{{truncate . 200}}</span>{{end}}
+        </a>
+      </li>
+      {{end}}
+    </ul>
+  </section>
+{{end}}
+</div>
+{{end}}
