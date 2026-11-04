@@ -56,6 +56,7 @@ func NewUndercastBot(
 	b, err := bot.New(cfg.Token,
 		bot.WithDefaultHandler(ub.linkHandler),
 		bot.WithMiddlewares(ub.trace, ub.authenticate),
+		bot.WithHTTPClient(telegramPollTimeout, newTelegramHTTPClient()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create bot: %w", err)
