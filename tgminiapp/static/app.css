@@ -219,6 +219,8 @@ input[type=checkbox], input[type=radio] {
 .actions-row { display: flex; gap: 8px; }
 .actions-row .btn-wide { width: auto; flex: 1 1 0; }
 .in-telegram .fallback-only { display: none !important; }
+/* A Telegram client without the secondary button uses the buttons of the page. */
+.in-telegram .html-buttons .actions-row.fallback-only { display: flex !important; }
 
 .select-all { user-select: all; -webkit-user-select: all; word-break: break-all; display: block; }
 .invite { display: flex; flex-direction: column; gap: 12px; }

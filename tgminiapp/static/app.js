@@ -135,15 +135,22 @@
   // data-secondary-button-hidden do the same for the secondary button.
   // A button click submits the form with its [data-main-submit] or
   // [data-secondary-submit] button, if the form has one.
+  // A client before Bot API 7.10 has no secondary button. Then a form with
+  // data-secondary-button gets the class html-buttons and shows its own
+  // buttons instead of the Telegram buttons.
   let mainButtonForm = null;
   let pressedButton = null; // the Telegram button that submitted the form
+  const hasSecondaryButton = inTelegram && !!tg.SecondaryButton &&
+    typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast('7.10');
 
   function syncMainButton() {
     if (!inTelegram) return;
     const mb = tg.MainButton;
-    const sb = tg.SecondaryButton;
+    const sb = hasSecondaryButton ? tg.SecondaryButton : null;
     const form = document.querySelector('#main [data-main-button]');
-    if (!form || form.dataset.mainButtonHidden === 'true') {
+    const htmlButtons = form && form.dataset.secondaryButton && !sb;
+    if (form) form.classList.toggle('html-buttons', !!htmlButtons);
+    if (!form || htmlButtons || form.dataset.mainButtonHidden === 'true') {
       mainButtonForm = null;
       mb.hide();
       if (sb) sb.hide();
@@ -180,7 +187,7 @@
 
   if (inTelegram) {
     tg.MainButton.onClick(() => submitWith(tg.MainButton, '[data-main-submit]'));
-    if (tg.SecondaryButton) tg.SecondaryButton.onClick(() => submitWith(tg.SecondaryButton, '[data-secondary-submit]'));
+    if (hasSecondaryButton) tg.SecondaryButton.onClick(() => submitWith(tg.SecondaryButton, '[data-secondary-submit]'));
     document.addEventListener('htmx:beforeRequest', (e) => {
       if (mainButtonForm && e.detail.elt === mainButtonForm) (pressedButton || tg.MainButton).showProgress(false);
     });
