@@ -1,0 +1,22 @@
+{{define "page"}}
+<header class="page-header">
+  <h1>Admin</h1>
+</header>
+
+<section class="section">
+  <h3 class="section-header">Invite a friend</h3>
+  <div class="card">
+    <button class="btn btn-wide" hx-post="/admin/invites" hx-target="#invite" hx-swap="innerHTML">Make an invite link</button>
+  </div>
+  <div id="invite"></div>
+</section>
+
+<section class="section">
+  <h3 class="section-header">Storage cleanup</h3>
+  <div class="card">
+    <p class="hint">Find episode files that belong to no episode.</p>
+    <button class="btn btn-wide" hx-post="/admin/gc/scan" hx-target="#gc" hx-swap="outerHTML" hx-disabled-elt="this">Scan storage</button>
+  </div>
+  <div id="gc"></div>
+</section>
+{{end}}

@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/multierr"
@@ -64,6 +66,22 @@ type Repository interface {
 	// CountIncompleteEpisodes returns the stats of each status that is not complete and has episodes.
 	CountIncompleteEpisodes(ctx context.Context) ([]EpisodeStatusStats, error)
 
+	// SaveCover saves a cover picture.
+	SaveCover(ctx context.Context, cover *Cover) error
+	// GetCover returns the cover picture, or (nil, nil) if there is none.
+	GetCover(ctx context.Context, id string) (*Cover, error)
+	// SetEpisodeCover sets the cover of the episode. An empty coverID means that the file has no cover.
+	SetEpisodeCover(ctx context.Context, userID, episodeID, coverID string) error
+	// ListEpisodesWithoutCover returns complete episodes of all users that nobody looked for a cover for yet.
+	ListEpisodesWithoutCover(ctx context.Context) ([]*Episode, error)
+
+	InsertEpisodeEvents(ctx context.Context, events []*EpisodeEvent) error
+	ListEpisodeEvents(ctx context.Context, userID, episodeID string) ([]*EpisodeEvent, error)
+
+	InsertSourceLink(ctx context.Context, link *SourceLink) error
+	GetSourceLink(ctx context.Context, userID, id string) (*SourceLink, error)
+	DeleteSourceLinksBefore(ctx context.Context, t time.Time) error
+
 	BulkInsertPublications(ctx context.Context, publications []*Publication) error
 	ListPublicationsByEpisodeIDs(ctx context.Context, userID string, episodeIDs []string) ([]*Publication, error)
 	DeletePublications(ctx context.Context, userID string, publicationIDs []string) error
@@ -82,9 +100,21 @@ type Service struct {
 
 	episodeStatusChangesChan chan EpisodeStatusChanges
 	defaultFeedTitle         string
+	// httpClient reads the start of episode files to find their covers.
+	httpClient *http.Client
+	// publicURL is the public URL of the Mini App. The feeds link the covers there.
+	publicURL string
+}
+
+// SetPublicURL sets the public URL of the Mini App, for example "https://podcasts.example.com".
+// Without it, the feeds have no covers.
+func (svc *Service) SetPublicURL(url string) {
+	svc.publicURL = strings.TrimRight(url, "/")
 }
 
 type Metadata = mediary.Metadata
+
+type Variant = mediary.Variant
 
 type Episode struct {
 	ID              string
@@ -106,6 +136,17 @@ type Episode struct {
 	// created this episode, so that retrying that work finds this row instead of
 	// creating another one. Empty for episodes created before it was introduced.
 	CreationKey string
+	// CoverID identifies the cover picture in the covers table. It is empty if the
+	// file has no cover, or if nobody looked for it yet.
+	CoverID string
+}
+
+// CoverPath is the path of the cover picture in the Mini App, or "".
+func (e *Episode) CoverPath() string {
+	if e.CoverID == "" {
+		return ""
+	}
+	return "/covers/" + e.CoverID
 }
 
 // RequestID returns the ID of the create request that created the episode.
@@ -202,6 +243,7 @@ func New(
 		obfuscateIDs:             obfuscateIDs,
 		defaultFeedTitle:         defaultFeedTitle,
 		metrics:                  metrics,
+		httpClient:               &http.Client{Timeout: time.Minute, Transport: otelhttp.NewTransport(http.DefaultTransport)},
 	}
 }
 
@@ -254,33 +296,41 @@ func (svc *Service) FetchMetadata(ctx context.Context, mediaURL string) (*Metada
 	}, metadataDelays...)
 }
 
+// CreateEpisodesAsync queues the creation of the episodes and returns the ID of the
+// create request. The episodes go into the feeds with feedIDs. If feedIDs is empty,
+// they go into the default feed.
 func (svc *Service) CreateEpisodesAsync(
 	ctx context.Context,
 	userID string,
 	url string,
 	variantsPerEpisode [][]string,
 	processingType ProcessingType,
-) error {
+	feedIDs []string,
+) (requestID string, err error) {
+	requestID = uuid.NewString()
 	fields := []any{
 		slog.String("url", url),
 		slog.Any("variants_per_episode", variantsPerEpisode),
 		slog.String("processing_type", string(processingType)),
 		slog.String("user_id", userID),
+		slog.String("request_id", requestID),
+		slog.Any("feed_ids", feedIDs),
 	}
 
 	svc.logger.InfoContext(ctx, "queueing episodes creation", fields...)
 
 	if err := svc.jobsQueue.Publish(ctx, queueEventCreateEpisodes, &CreateEpisodesQueuePayload{
-		RequestID:          uuid.NewString(),
+		RequestID:          requestID,
 		URL:                url,
 		VariantsPerEpisode: variantsPerEpisode,
 		ProcessingType:     processingType,
 		UserID:             userID,
+		FeedIDs:            feedIDs,
 	}); err != nil {
-		return telemetry.LogError(svc.logger, ctx, err, "failed to enqueue episodes creation", fields...)
+		return "", telemetry.LogError(svc.logger, ctx, err, "failed to enqueue episodes creation", fields...)
 	}
 
-	return nil
+	return requestID, nil
 }
 
 // episodeFilename derives an episode's S3 filename from its creation key. It is
@@ -670,6 +720,17 @@ func (svc *Service) DeleteEpisodes(ctx context.Context, userID string, epIDs []s
 		return err
 	}
 
+	// An episode that is not finished stops its mediary job, so that mediary does not
+	// download and upload a file that no episode uses.
+	for _, ep := range episodesMap {
+		if ep.MediaryID != "" && !ep.Status.IsFinal() {
+			if err := svc.mediaSvc.CancelJob(ctx, ep.MediaryID); err != nil {
+				svc.logger.WarnContext(ctx, "failed to cancel the mediary job of a deleted episode",
+					slog.String("episode_id", ep.ID), slog.String("mediary_id", ep.MediaryID), slog.Any("error", err))
+			}
+		}
+	}
+
 	publications, err := svc.repository.ListPublicationsByEpisodeIDs(ctx, userID, epIDs)
 	if err != nil {
 		return telemetry.LogError(svc.logger, ctx, err, "failed to list publications", fields...)
@@ -982,6 +1043,7 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 	// them by creation key instead of creating more, and each episode's upload is a
 	// separate job, so one failing variant neither blocks nor re-runs the others.
 	var episodes []*Episode
+	var episodesStatusChanges []EpisodeStatusChange
 	if err := svc.repository.Transaction(ctx, func(ctx context.Context) error {
 		episodes = episodes[:0]
 		for i, variants := range payload.VariantsPerEpisode {
@@ -991,7 +1053,29 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 			}
 			episodes = append(episodes, ep)
 		}
-		return nil
+
+		feedIDs, err := svc.creationFeedIDs(ctx, payload.UserID, payload.FeedIDs)
+		if err != nil {
+			return err
+		}
+		epIDs := make([]string, len(episodes))
+		for i, ep := range episodes {
+			epIDs[i] = ep.ID
+		}
+		// The feeds get the episodes when they are complete: the poll regenerates the feeds then.
+		if _, err := svc.addPublications(ctx, payload.UserID, epIDs, feedIDs); err != nil {
+			return err
+		}
+
+		episodesStatusChanges = make([]EpisodeStatusChange, len(episodes))
+		for i, e := range episodes {
+			episodesStatusChanges[i] = EpisodeStatusChange{
+				Episode:   e,
+				OldStatus: EpisodeStatusUndefined,
+				NewStatus: EpisodeStatusCreated,
+			}
+		}
+		return svc.recordStatusChanges(ctx, episodesStatusChanges)
 	}); err != nil {
 		return telemetry.LogError(svc.logger, ctx, err, "failed to persist queued episodes", fields...)
 	}
@@ -1009,14 +1093,6 @@ func (svc *Service) onCreateEpisodesQueueEvent(ctx context.Context, payloadBytes
 		}
 	}
 
-	episodesStatusChanges := make([]EpisodeStatusChange, len(episodes))
-	for i, e := range episodes {
-		episodesStatusChanges[i] = EpisodeStatusChange{
-			Episode:   e,
-			OldStatus: EpisodeStatusUndefined,
-			NewStatus: EpisodeStatusCreated,
-		}
-	}
 	svc.episodeStatusChangesChan <- newEpisodeStatusChanges(ctx, episodesStatusChanges)
 
 	return nil
@@ -1104,9 +1180,13 @@ func (svc *Service) onStartEpisodeUploadDeadLetter(ctx context.Context, tx *sql.
 		return telemetry.LogError(svc.logger, ctx, err, "failed to save failed episode", fields...)
 	}
 
+	changes := []EpisodeStatusChange{{Episode: ep, OldStatus: oldStatus, NewStatus: EpisodeStatusFailed, Error: "could not start the upload"}}
+	if err := svc.recordStatusChanges(txCtx, changes); err != nil {
+		return telemetry.LogError(svc.logger, ctx, err, "failed to record failed episode", fields...)
+	}
+
 	// Don't block on the bot while holding the queue's write lock. If the transaction
 	// is then rolled back, the hook runs again and the user may be told twice.
-	changes := []EpisodeStatusChange{{Episode: ep, OldStatus: oldStatus, NewStatus: EpisodeStatusFailed}}
 	batch := newEpisodeStatusChanges(ctx, changes)
 	go func() { svc.episodeStatusChangesChan <- batch }()
 
@@ -1223,9 +1303,11 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 
 	var episodesSaveError error
 	feedsToPublish := make(map[string]bool)
+	var savedEpisodes []*Episode
 	for _, e := range episodesToSave {
 		fields := append(fields, slog.String("episode_id", e.ID))
 		if _, err := svc.repository.SaveEpisode(ctx, e); err == nil {
+			savedEpisodes = append(savedEpisodes, e)
 			if _, exists := epFeedsMap[e.ID]; exists {
 				for _, f := range epFeedsMap[e.ID] {
 					feedsToPublish[f] = true
@@ -1235,6 +1317,8 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 			episodesSaveError = multierr.Append(episodesSaveError, telemetry.LogError(svc.logger, ctx, err, "failed to save episode", fields...))
 		}
 	}
+	// Before the feeds are made again, so that they have the covers.
+	svc.findCoversOfCompleteEpisodes(ctx, savedEpisodes)
 
 	feedIDs := make([]string, 0, len(feedsToPublish))
 	for f := range feedsToPublish {
@@ -1252,6 +1336,9 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 	}
 
 	if len(episodesStateChanges) > 0 {
+		if err := svc.recordStatusChanges(ctx, episodesStateChanges); err != nil {
+			svc.logger.ErrorContext(ctx, "failed to record episode status changes", append(fields, slog.Any("error", err))...)
+		}
 		svc.episodeStatusChangesChan <- newEpisodeStatusChanges(ctx, episodesStateChanges)
 	}
 
@@ -1259,7 +1346,7 @@ func (svc *Service) onPollEpisodesQueueEvent(ctx context.Context, payloadBytes [
 		// Give up once we've been polling a job for too long: cancel it in mediary
 		// and mark the episode failed, rather than polling forever.
 		if payload.PollingStartedAt != nil && time.Since(*payload.PollingStartedAt) > maxPollingDuration {
-			svc.failEpisodes(ctx, episodeIDsToRequeue, episodesMap, "episodes marked failed after polling timeout")
+			svc.failEpisodes(ctx, episodeIDsToRequeue, episodesMap, "gave up after 24 hours of processing")
 			return nil
 		}
 
@@ -1329,11 +1416,14 @@ func (svc *Service) failEpisodes(ctx context.Context, episodeIDs []string, episo
 			svc.logger.ErrorContext(ctx, "failed to save failed episode", append(fields, slog.Any("error", err))...)
 			continue
 		}
-		changes = append(changes, EpisodeStatusChange{Episode: ep, OldStatus: oldStatus, NewStatus: EpisodeStatusFailed})
+		changes = append(changes, EpisodeStatusChange{Episode: ep, OldStatus: oldStatus, NewStatus: EpisodeStatusFailed, Error: reason})
 	}
 
 	if len(changes) > 0 {
 		svc.logger.WarnContext(ctx, reason, slog.Any("episode_ids", episodeIDs))
+		if err := svc.recordStatusChanges(ctx, changes); err != nil {
+			svc.logger.ErrorContext(ctx, "failed to record failed episodes", slog.Any("error", err))
+		}
 		svc.episodeStatusChangesChan <- newEpisodeStatusChanges(ctx, changes)
 	}
 }
@@ -1382,7 +1472,7 @@ func (svc *Service) regenerateFeedFile(ctx context.Context, feed *Feed) error {
 	}
 
 	objectKey := svc.constructS3FeedKey(feed.UserID, feed.ID)
-	feedReader, err := generateFeed(feed, episodes)
+	feedReader, err := generateFeed(feed, episodes, svc.publicURL)
 	if err != nil {
 		return telemetry.LogError(svc.logger, ctx, err, "failed to generate feed", fields...)
 	}

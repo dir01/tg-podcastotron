@@ -1,0 +1,87 @@
+{{define "no-access"}}
+<div class="empty">
+  {{if eq .Reason "no-access"}}
+    <div class="empty-icon">🔒</div>
+    <h2>You have no access yet</h2>
+    <p>Ask the admin for an invite link.</p>
+  {{else if eq .Reason "not-telegram"}}
+    <div class="empty-icon">📱</div>
+    <h2>Open this app from Telegram</h2>
+    <p>Tap the menu button in the chat with the bot.</p>
+  {{else if eq .Reason "expired"}}
+    <div class="empty-icon">⏳</div>
+    <h2>This session expired</h2>
+    <p>Close the app and open it again.</p>
+  {{else if eq .Reason "error"}}
+    <div class="empty-icon">⚠️</div>
+    <h2>Something went wrong</h2>
+    <p>Try again later.</p>
+  {{else}}
+    <div class="empty-icon">🔑</div>
+    <h2>Could not check who you are</h2>
+    <p>Close the app and open it again.</p>
+  {{end}}
+</div>
+{{end}}
+
+{{/* A progress bar. The argument is a []barPart. */}}
+{{define "bar"}}
+<div class="bar" role="img" aria-label="{{range $i, $p := .}}{{if $i}}, {{end}}{{$p.Count}} {{$p.Label}}{{end}}">
+  {{range .}}<span class="bar-part st-{{.Class}}" style="width: {{printf "%.2f" .Percent}}%"></span>{{end}}
+</div>
+{{end}}
+
+{{define "legend"}}
+<ul class="legend">
+  {{range .}}<li><span class="dot st-{{.Class}}"></span>{{.Count}} {{.Label}}</li>{{end}}
+</ul>
+{{end}}
+
+{{/* The steps of one episode. The argument is a []step. */}}
+{{define "steps"}}
+<ol class="steps">
+  {{range .}}<li class="step step-{{.State}}"><span class="step-dot"></span><span class="step-label">{{.Label}}</span></li>{{end}}
+</ol>
+{{end}}
+
+{{/* The feeds of an episode as chips, and the time until it is deleted. The argument is an *episodeView. */}}
+{{define "feed-chips"}}
+<span class="chips">
+  {{range .Feeds}}<span class="chip">{{if .IsPermanent}}{{template "keep-icon"}} {{end}}{{.Title}}</span>{{else}}<span class="chip chip-warn">No feed</span>{{end}}
+</span>
+{{end}}
+
+{{/* A link in a rounded box: the first lines of the link, and a copy button.
+     A tap anywhere in the box copies the link. The argument is the link. */}}
+{{define "link-box"}}
+<div class="link-box" data-copy="{{.}}">
+  <span class="link-box-text">{{truncate . 240}}</span>
+  <button type="button" class="link-box-copy" data-copy="{{.}}" title="Copy the link" aria-label="Copy the link">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 9V6.5A2.5 2.5 0 0 0 12.5 4h-6A2.5 2.5 0 0 0 4 6.5v6A2.5 2.5 0 0 0 6.5 15H9"/>
+    </svg>
+  </button>
+</div>
+{{end}}
+
+{{/* A page title with a pencil button that shows the rename form. */}}
+{{define "edit-button"}}
+<button type="button" class="icon-btn edit-btn" data-edit-toggle="{{.}}" title="Rename" aria-label="Rename">
+  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>
+  </svg>
+</button>
+{{end}}
+
+{{/* A small cover of an episode, or a placeholder. The argument is an episode. */}}
+{{define "thumb"}}
+{{with .CoverPath}}<img class="thumb" src="{{.}}" alt="" loading="lazy">{{else}}<span class="thumb thumb-empty" aria-hidden="true">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>
+</span>{{end}}
+{{end}}
+
+{{/* The mark of a feed that keeps its episodes: they are never deleted. */}}
+{{define "keep-icon"}}<svg class="keep-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Keeps episodes"><title>Keeps episodes</title><path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4z"/></svg>{{end}}
+
+{{/* The text about how long a feed keeps its episodes. The argument is a feed. */}}
+{{define "keep-text"}}{{if .IsPermanent}}{{template "keep-icon"}} Keeps episodes{{else}}Deletes episodes after 30 days{{end}}{{end}}

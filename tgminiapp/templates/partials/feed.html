@@ -1,0 +1,61 @@
+{{/* The arguments of the feed partials are a *feedData. */}}
+{{define "feed-title"}}
+<header id="feed-title" class="page-header">
+  <p class="overline">Feed</p>
+  <div class="title-row">
+    <h1>{{.Feed.Title}}</h1>
+    {{template "edit-button" "feed-rename"}}
+  </div>
+  <p class="hint">{{.Totals}}</p>
+  <form id="feed-rename" class="inline-form" hidden hx-post="/feeds/{{.Feed.ID}}/title" hx-target="#feed-title" hx-swap="outerHTML">
+    <input class="input" type="text" name="title" value="{{.Feed.Title}}" required>
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+</header>
+{{end}}
+
+{{define "feed-body"}}
+<div id="feed-body">
+  <section class="section">
+    <div class="card list">
+      <label class="row switch-row">
+        <span class="row-text">
+          <span class="row-title">Keep episodes</span>
+          <span class="row-sub">{{if .Feed.IsPermanent}}Episodes in this feed stay until you delete them.{{else}}Episodes that are in no such feed are deleted 30 days after their last change.{{end}}</span>
+        </span>
+        <input class="switch" type="checkbox" name="permanent" value="1" {{if .Feed.IsPermanent}}checked{{end}}
+          hx-post="/feeds/{{.Feed.ID}}/permanent" hx-target="#feed-body" hx-swap="outerHTML">
+      </label>
+    </div>
+  </section>
+
+  <section class="section">
+    <h3 class="section-header">Episodes</h3>
+    {{if .Episodes}}
+    <ul class="card list">
+      {{range .Episodes}}
+      <li class="ep-row with-action">
+        <a class="row-link with-thumb" href="/episodes/{{.ID}}">
+          {{template "thumb" .}}
+          <span class="ep-body">
+            <span class="ep-title">{{.Title}}</span>
+            <span class="ep-meta">
+              {{if ne .Stage.Class "done"}}<span class="pill st-{{.Stage.Class}}">{{.Stage.Label}}</span>{{end}}
+              {{with duration .Duration}}<span>{{.}}</span>{{end}}
+              <span>{{date .CreatedAt $.Now}}</span>
+              {{if .Expires}}<span class="text-hint">deleted in {{plural (daysLeft .ExpiresAt $.Now) "day" "days"}}</span>{{end}}
+            </span>
+          </span>
+        </a>
+        <button class="icon-btn" title="Remove from this feed" aria-label="Remove from this feed"
+          hx-post="/feeds/{{$.Feed.ID}}/remove" hx-vals='{"episode": "{{.ID}}"}' hx-target="#feed-body" hx-swap="outerHTML"
+          hx-confirm="Remove “{{truncate .Title 60}}” from this feed? The episode stays in your library.">✕</button>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <div class="card empty small"><p>No episodes yet. Send a link to the bot, or paste it on the home page.</p></div>
+    {{end}}
+  </section>
+</div>
+{{end}}

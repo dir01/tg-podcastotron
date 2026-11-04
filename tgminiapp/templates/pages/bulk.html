@@ -1,0 +1,28 @@
+{{define "page"}}
+<header class="page-header">
+  <h1>Edit {{plural (len .Episodes) "episode" "episodes"}}</h1>
+</header>
+
+{{template "bulk-titles" .}}
+{{template "bulk-feeds" .Feeds}}
+
+<section class="section">
+  <h3 class="section-header">Rename</h3>
+  <form class="card rename-form" hx-post="/episodes/bulk/rename" hx-target="#bulk-titles" hx-swap="outerHTML">
+    <input type="hidden" name="ids" value="{{.IDs}}">
+    <input class="input" type="text" name="pattern" placeholder="Chapter %v" required>
+    <button class="btn btn-primary" type="submit">Rename</button>
+  </form>
+  <p class="section-footer">
+    <code>%v</code> is the part of the old titles that is different in each episode, for example the chapter number.
+    <code>%id</code> is the episode number. Without them, all episodes get the same title.
+  </p>
+</section>
+
+<section class="section">
+  <div class="card list">
+    <button class="row danger-row" hx-post="/episodes/bulk/delete" hx-vals='{"ids": "{{.IDs}}"}' hx-swap="none"
+      hx-confirm="Delete {{plural (len .Episodes) "episode" "episodes"}}? Their files are deleted, and they go out of all feeds.">Delete {{plural (len .Episodes) "episode" "episodes"}}</button>
+  </div>
+</section>
+{{end}}

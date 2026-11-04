@@ -1,34 +1,26 @@
+// Package bot is the chat side of the app. The Mini App (package tgminiapp) has the
+// UI. The bot only gets links, opens the Mini App, accepts invites, and tells the
+// user when the episodes of a request are finished.
 package bot
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/trace"
 	"tg-podcastotron/auth"
 	"tg-podcastotron/service"
 	"tg-podcastotron/telemetry"
 )
 
-func NewUndercastBot(
-	token string,
-	auth *auth.Service,
-	repository Repository,
-	service *service.Service,
-	logger *slog.Logger,
-) *UndercastBot {
-	return &UndercastBot{
-		logger:     logger,
-		token:      token,
-		auth:       auth,
-		service:    service,
-		repository: repository,
-	}
+type Config struct {
+	Token string
+	// MiniAppURL is the public HTTPS URL of the Mini App, without the last "/".
+	MiniAppURL string
+	// Prefetch, if set, starts to get the file list of a link, so that the Mini App shows it sooner.
+	Prefetch func(ctx context.Context, url string)
 }
 
 type Repository interface {
@@ -37,111 +29,111 @@ type Repository interface {
 }
 
 type UndercastBot struct {
+	cfg        Config
 	logger     *slog.Logger
-	token      string
 	bot        *bot.Bot
 	auth       *auth.Service
 	service    *service.Service
 	repository Repository
-
-	episodesStatusChangesChan chan service.EpisodeStatusChanges
-	gcScans                   gcPendingScans
-	statusMessages            statusMessages
+	notified   notifiedRequests
 }
 
-func (ub *UndercastBot) Start(ctx context.Context) error {
-	opts := []bot.Option{
-		bot.WithDefaultHandler(ub.urlHandler),
-		bot.WithMiddlewares(ub.trace, ub.authenticate, ub.setMenuMiddleware),
+// NewUndercastBot connects to Telegram. It returns an error if the token is not correct.
+func NewUndercastBot(
+	cfg Config,
+	auth *auth.Service,
+	repository Repository,
+	service *service.Service,
+	logger *slog.Logger,
+) (*UndercastBot, error) {
+	ub := &UndercastBot{
+		cfg:        cfg,
+		logger:     logger,
+		auth:       auth,
+		service:    service,
+		repository: repository,
 	}
+	b, err := bot.New(cfg.Token,
+		bot.WithDefaultHandler(ub.linkHandler),
+		bot.WithMiddlewares(ub.trace, ub.authenticate),
+		bot.WithHTTPClient(telegramPollTimeout, newTelegramHTTPClient()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bot: %w", err)
+	}
+	ub.bot = b
+	return ub, nil
+}
 
-	ub.episodesStatusChangesChan = ub.service.Start(ctx)
+// Username returns the username of the bot.
+func (ub *UndercastBot) Username(ctx context.Context) (string, error) {
+	me, err := ub.bot.GetMe(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get bot user: %w", err)
+	}
+	return me.Username, nil
+}
+
+// Start gets updates and status changes until ctx is done.
+func (ub *UndercastBot) Start(ctx context.Context, statusChanges <-chan service.EpisodeStatusChanges) {
+	ub.setUpMenu(ctx)
+
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case batch := <-ub.episodesStatusChangesChan:
+			case batch := <-statusChanges:
 				ub.handleEpisodesStatusChanges(ctx, batch)
 			}
 		}
 	}()
 
-	go ub.pollExpiredEpisodes(ctx, time.NewTicker(24*time.Hour), 30*24*time.Hour)
-
-	var err error
-	ub.bot, err = bot.New(ub.token, opts...)
-	if err != nil {
-		return telemetry.LogError(ub.logger, ctx, err, "error while creating go-telegram/bot")
-	}
-
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, ub.helpHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, ub.helpHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ep", bot.MatchTypePrefix, ub.listEpisodesHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ee", bot.MatchTypePrefix, ub.editEpisodesHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/f", bot.MatchTypePrefix, ub.listFeedsHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/ef", bot.MatchTypePrefix, ub.editFeedsHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/nf", bot.MatchTypeExact, ub.newFeedHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/adduser", bot.MatchTypeExact, ub.addUserHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/gc", bot.MatchTypeExact, ub.gcHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, gcCallbackPrefix, bot.MatchTypePrefix, ub.gcCallbackHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, feedPageCallbackPrefix, bot.MatchTypePrefix, ub.feedPageCallbackHandler)
-	ub.bot.RegisterHandler(bot.HandlerTypeCallbackQueryData, episodesPageCallbackPrefix, bot.MatchTypePrefix, ub.episodesPageCallbackHandler)
-	ub.bot.RegisterHandlerMatchFunc(func(update *models.Update) bool {
-		return update != nil && update.Message != nil && update.Message.Contact != nil
-	}, ub.addUserHandler)
+	ub.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypePrefix, ub.startHandler)
 	ub.bot.Start(ctx)
-
-	return nil
 }
 
-func (ub *UndercastBot) pollExpiredEpisodes(
-	ctx context.Context,
-	pollingTicker *time.Ticker,
-	epExpirationAge time.Duration,
-) {
-	ub.logger.InfoContext(ctx, "starting expired episodes poller")
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-pollingTicker.C:
-			ub.logger.InfoContext(ctx, "listing expired episodes")
-			expiredEps, err := ub.service.ListExpiredEpisodes(ctx, epExpirationAge)
-			if err != nil {
-				ub.logger.ErrorContext(ctx, "error while listing expired episodes", slog.Any("error", err))
-				continue
-			}
+// setUpMenu replaces the commands of the old chat UI with a menu button that opens the Mini App.
+func (ub *UndercastBot) setUpMenu(ctx context.Context) {
+	if _, err := ub.bot.DeleteMyCommands(ctx, &bot.DeleteMyCommandsParams{}); err != nil {
+		ub.logger.WarnContext(ctx, "failed to delete bot commands", slog.Any("error", err))
+	}
+	if _, err := ub.bot.SetChatMenuButton(ctx, &bot.SetChatMenuButtonParams{
+		MenuButton: models.MenuButtonWebApp{
+			Type:   models.MenuButtonTypeWebApp,
+			Text:   "Open",
+			WebApp: models.WebAppInfo{URL: ub.miniAppURL("/")},
+		},
+	}); err != nil {
+		ub.logger.ErrorContext(ctx, "failed to set the menu button", slog.Any("error", err))
+	}
+}
 
-			for _, ep := range expiredEps {
-				if err := ub.service.DeleteEpisodes(ctx, ep.UserID, []string{ep.ID}); err != nil {
-					ub.logger.ErrorContext(ctx, "error while deleting episode", slog.Any("error", err))
-				} else {
-					ub.logger.InfoContext(
-						ctx,
-						"deleted episode",
-						slog.String("id", ep.ID),
-						slog.String("title", ep.Title),
-						slog.String("url", ep.URL),
-					)
-				}
-			}
-		}
+func (ub *UndercastBot) miniAppURL(path string) string {
+	return ub.cfg.MiniAppURL + path
+}
+
+// openButton is a keyboard with one button that opens the Mini App at path.
+func (ub *UndercastBot) openButton(text, path string) *models.InlineKeyboardMarkup {
+	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{{
+		{Text: text, WebApp: &models.WebAppInfo{URL: ub.miniAppURL(path)}},
+	}}}
+}
+
+func (ub *UndercastBot) send(ctx context.Context, chatID int64, text string, markup models.ReplyMarkup) {
+	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:             chatID,
+		Text:               text,
+		ParseMode:          models.ParseModeHTML,
+		ReplyMarkup:        markup,
+		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
+	}); err != nil {
+		ub.logger.ErrorContext(ctx, "failed to send message", slog.Int64("chat_id", chatID), slog.Any("error", err))
 	}
 }
 
 func (ub *UndercastBot) handleError(ctx context.Context, chatID int64, err error) {
-	id := uuid.New().String()
-	telemetry.RecordError(trace.SpanFromContext(ctx), err)
-	ub.logger.ErrorContext(ctx, "error", slog.String("id", id), slog.Any("error", err))
-	ub.sendTextMessage(ctx, chatID, fmt.Sprintf("An error occurred while processing your request. Please try again later. \nError ID: %s", id))
-}
-
-func (ub *UndercastBot) sendTextMessage(ctx context.Context, chatID int64, message string) {
-	if _, err := ub.bot.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   message,
-	}); err != nil {
-		ub.logger.ErrorContext(ctx, "sendTextMessage error", slog.Any("error", err))
-	}
+	telemetry.RecordError(spanFromContext(ctx), err)
+	ub.logger.ErrorContext(ctx, "error", slog.Any("error", err))
+	ub.send(ctx, chatID, "Something went wrong. Try again later.", nil)
 }

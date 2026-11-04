@@ -1,0 +1,41 @@
+{{define "page"}}
+<header class="page-header home-header">
+  <h1>Podcast-O-Tron</h1>
+  <p class="hint">Hi, {{.User.FirstName}}. Make podcast episodes from torrents and videos.</p>
+</header>
+
+<section class="section">
+  <form class="card paste-form" hx-post="/links" hx-swap="none">
+    <input class="input" type="text" name="url" inputmode="url" autocomplete="off" placeholder="Paste a magnet link or a video link" required>
+    <button class="btn btn-primary" type="submit">Add</button>
+  </form>
+  <p class="section-footer">You can also send a link to the bot in the chat.</p>
+</section>
+
+{{template "activity" .Activity}}
+
+<section class="section">
+  <h3 class="section-header">Your feeds <a class="link-btn" href="/feeds/new">+ New feed</a></h3>
+  <ul class="card list">
+    {{range .Feeds}}
+    <li class="link-item">
+      <a class="row-link row-chevron" href="/feeds/{{.ID}}">
+        <span class="row-text">
+          <span class="row-title">{{.Title}}</span>
+          <span class="row-sub">{{.Totals}}</span>
+          <span class="row-sub">{{template "keep-text" .}}</span>
+        </span>
+      </a>
+      <div class="row-extra">{{template "link-box" .URL}}</div>
+    </li>
+    {{end}}
+  </ul>
+</section>
+
+<section class="section">
+  <ul class="card list">
+    <li><a class="row-link row-chevron" href="/episodes"><span class="row-text"><span class="row-title">All episodes</span><span class="row-sub">{{.Episodes}}</span></span></a></li>
+    {{if .User.IsAdmin}}<li><a class="row-link row-chevron" href="/admin"><span class="row-title">Admin</span></a></li>{{end}}
+  </ul>
+</section>
+{{end}}

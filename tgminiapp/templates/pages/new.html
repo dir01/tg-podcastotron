@@ -1,0 +1,8 @@
+{{define "page"}}
+<header class="page-header">
+  <p class="overline">New episodes</p>
+  <h1>{{with .Title}}{{.}}{{else}}Choose files{{end}}</h1>
+  {{template "link-box" .Link.URL}}
+</header>
+{{template "new-files" .Files}}
+{{end}}

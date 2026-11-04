@@ -1,0 +1,12 @@
+{{define "page"}}
+<header class="page-header">
+  <h1>New feed</h1>
+</header>
+<section class="section">
+  <form class="card rename-form" hx-post="/feeds" hx-swap="none">
+    <input class="input" type="text" name="title" placeholder="Feed name" required autofocus>
+    <button class="btn btn-primary" type="submit">Create</button>
+  </form>
+  <p class="section-footer">Each feed is a separate podcast in your podcast app.</p>
+</section>
+{{end}}

@@ -1,0 +1,26 @@
+{{define "page"}}
+<header class="page-header">
+  <p class="overline">Link</p>
+  {{with .Request}}
+  <h1>{{with .Title}}{{.}}{{else}}Episodes{{end}}</h1>
+  {{template "link-box" .SourceURL}}
+  <p class="hint">Added {{ago .CreatedAt $.Now}} · {{$.Totals}}</p>
+  {{else}}
+  <h1>New episodes</h1>
+  {{end}}
+</header>
+{{with .Feeds}}{{template "request-feeds" .}}{{end}}
+{{template "request-progress" .}}
+
+{{with .Request}}
+<section class="section">
+  <div class="card list">
+    <a class="row-link row-chevron" href="/episodes/bulk?ids={{joinIDs .Episodes}}"><span class="row-title">Rename the episodes</span></a>
+    <button class="row danger-row" hx-post="/requests/{{.ID}}/delete" hx-swap="none"
+      hx-confirm="Delete {{plural (len .Episodes) "episode" "episodes"}} from this link?{{if not .Finished}} The episodes that are not ready stop.{{end}} You cannot undo this.">
+      Delete the link and its {{plural (len .Episodes) "episode" "episodes"}}
+    </button>
+  </div>
+</section>
+{{end}}
+{{end}}

@@ -19,6 +19,11 @@ import (
 
 func newGCTestService(t *testing.T, s3 *servicemocks.MockS3Store) (*service.Service, service.Repository) {
 	t.Helper()
+	return newGCTestServiceWithMediary(t, s3, &mediarymocks.ServiceMock{})
+}
+
+func newGCTestServiceWithMediary(t *testing.T, s3 *servicemocks.MockS3Store, mediarySvc *mediarymocks.ServiceMock) (*service.Service, service.Repository) {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	db, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "test.db")+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
@@ -31,7 +36,7 @@ func newGCTestService(t *testing.T, s3 *servicemocks.MockS3Store) (*service.Serv
 	queue := must(jobsqueue.New(db, 1, logger))(t)
 	t.Cleanup(queue.Shutdown)
 	repo := service.NewSqliteRepository(db, db)
-	return service.New(&mediarymocks.ServiceMock{}, repo, s3, queue, "", func(s string) string { return "p-" + s }, logger, nil), repo
+	return service.New(mediarySvc, repo, s3, queue, "", func(s string) string { return "p-" + s }, logger, nil), repo
 }
 
 func saveEpisode(t *testing.T, repo service.Repository, userID, id, storageKey string, status service.EpisodeStatus) *service.Episode {

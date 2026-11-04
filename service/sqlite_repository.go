@@ -348,6 +348,7 @@ func (r *sqliteRepository) ListUserEpisodes(ctx context.Context, userID string) 
 		if ep, err := dbEp.ToBusinessModel(); err != nil {
 			return nil, fmt.Errorf("failed to convert episode to business model: %w", err)
 		} else {
+			ep.FeedIDs = epFeedsMap[ep.ID]
 			result = append(result, ep)
 		}
 	}
@@ -433,6 +434,7 @@ func (r *sqliteRepository) GetEpisodesMap(ctx context.Context, userID string, ep
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert to business model: %w", err)
 		}
+		ep.FeedIDs = epFeedsMap[ep.ID]
 		result[ep.ID] = ep
 	}
 
@@ -441,6 +443,18 @@ func (r *sqliteRepository) GetEpisodesMap(ctx context.Context, userID string, ep
 
 func (r *sqliteRepository) DeleteEpisodes(ctx context.Context, userID string, episodeIDs []string) error {
 	db := r.dbFromContext(ctx)
+
+	coverQuery, coverArgs, err := sqlx.In(`
+		DELETE FROM covers WHERE id IN (
+			SELECT cover_id FROM episodes WHERE user_id = ? AND id IN (?) AND cover_id != ''
+		)`, userID, episodeIDs)
+	if err != nil {
+		return fmt.Errorf("failed to create IN query: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, db.Rebind(coverQuery), coverArgs...); err != nil {
+		return fmt.Errorf("failed to delete episode covers: %w", err)
+	}
+
 	query, args, err := sqlx.Named(`
 		DELETE FROM episodes 
 			WHERE id IN (:ids) 
@@ -461,6 +475,14 @@ func (r *sqliteRepository) DeleteEpisodes(ctx context.Context, userID string, ep
 
 	if _, err := db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("failed to delete episodes: %w", err)
+	}
+
+	query, args, err = sqlx.In(`DELETE FROM episode_events WHERE user_id = ? AND episode_id IN (?)`, userID, episodeIDs)
+	if err != nil {
+		return fmt.Errorf("failed to create IN query: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, db.Rebind(query), args...); err != nil {
+		return fmt.Errorf("failed to delete episode events: %w", err)
 	}
 
 	return nil
@@ -499,7 +521,30 @@ func (r *sqliteRepository) ListEpisodesByRequestID(ctx context.Context, userID, 
 		}
 		episodes = append(episodes, ep)
 	}
+	if err := r.attachFeedIDs(ctx, userID, episodes); err != nil {
+		return nil, err
+	}
 	return episodes, nil
+}
+
+// attachFeedIDs sets the FeedIDs of each episode from its publications.
+func (r *sqliteRepository) attachFeedIDs(ctx context.Context, userID string, episodes []*Episode) error {
+	ids := make([]string, len(episodes))
+	for i, ep := range episodes {
+		ids[i] = ep.ID
+	}
+	publications, err := r.ListPublicationsByEpisodeIDs(ctx, userID, ids)
+	if err != nil {
+		return fmt.Errorf("failed to list episodes feeds: %w", err)
+	}
+	feedIDs := make(map[string][]string, len(episodes))
+	for _, p := range publications {
+		feedIDs[p.EpisodeID] = append(feedIDs[p.EpisodeID], p.FeedID)
+	}
+	for _, ep := range episodes {
+		ep.FeedIDs = feedIDs[ep.ID]
+	}
+	return nil
 }
 
 // ListEpisodesByStorageKeys returns episodes of any user whose storage_key is one of storageKeys.
@@ -745,6 +790,156 @@ func (r *sqliteRepository) DeletePublications(ctx context.Context, userID string
 
 // endregion
 
+// region episode covers
+
+func (r *sqliteRepository) SaveCover(ctx context.Context, cover *Cover) error {
+	if _, err := r.dbFromContext(ctx).ExecContext(ctx, `
+		INSERT INTO covers (id, mime, data) VALUES (?, ?, ?)`, cover.ID, cover.MIME, cover.Data,
+	); err != nil {
+		return fmt.Errorf("failed to save cover: %w", err)
+	}
+	return nil
+}
+
+func (r *sqliteRepository) GetCover(ctx context.Context, id string) (*Cover, error) {
+	var c Cover
+	if err := r.dbFromContext(ctx).QueryRowxContext(ctx, `
+		SELECT id, mime, data FROM covers WHERE id = ?`, id,
+	).Scan(&c.ID, &c.MIME, &c.Data); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get cover: %w", err)
+	}
+	return &c, nil
+}
+
+func (r *sqliteRepository) SetEpisodeCover(ctx context.Context, userID, episodeID, coverID string) error {
+	if _, err := r.dbFromContext(ctx).ExecContext(ctx, `
+		UPDATE episodes SET cover_id = ? WHERE user_id = ? AND id = ?`, coverID, userID, episodeID,
+	); err != nil {
+		return fmt.Errorf("failed to set episode cover: %w", err)
+	}
+	return nil
+}
+
+func (r *sqliteRepository) ListEpisodesWithoutCover(ctx context.Context) ([]*Episode, error) {
+	var dbEpisodes []dbEpisode
+	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &dbEpisodes, `
+		SELECT * FROM episodes WHERE cover_id IS NULL AND status = ? AND url != ''`,
+		string(EpisodeStatusComplete),
+	); err != nil {
+		return nil, fmt.Errorf("failed to list episodes without cover: %w", err)
+	}
+	return toBusinessEpisodes(dbEpisodes)
+}
+
+// endregion
+
+// region episode events
+
+type dbEpisodeEvent struct {
+	ID          int64  `db:"id"`
+	UserID      string `db:"user_id"`
+	EpisodeID   string `db:"episode_id"`
+	At          string `db:"at"`
+	Status      string `db:"status"`
+	Attempt     int    `db:"attempt"`
+	MaxAttempts int    `db:"max_attempts"`
+	Detail      string `db:"detail"`
+}
+
+func (r *sqliteRepository) InsertEpisodeEvents(ctx context.Context, events []*EpisodeEvent) error {
+	db := r.dbFromContext(ctx)
+	for _, e := range events {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO episode_events (user_id, episode_id, at, status, attempt, max_attempts, detail)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			e.UserID, e.EpisodeID, timeToStr(e.At), string(e.Status), e.Attempt, e.MaxAttempts, e.Detail,
+		); err != nil {
+			return fmt.Errorf("failed to insert episode event: %w", err)
+		}
+	}
+	return nil
+}
+
+// ListEpisodeEvents returns the status history of the episode, oldest first.
+func (r *sqliteRepository) ListEpisodeEvents(ctx context.Context, userID, episodeID string) ([]*EpisodeEvent, error) {
+	var rows []dbEpisodeEvent
+	if err := sqlx.SelectContext(ctx, r.dbFromContext(ctx), &rows, `
+		SELECT * FROM episode_events
+		WHERE user_id = ? AND episode_id = ?
+		ORDER BY id`, userID, episodeID,
+	); err != nil {
+		return nil, fmt.Errorf("failed to list episode events: %w", err)
+	}
+	events := make([]*EpisodeEvent, len(rows))
+	for i, row := range rows {
+		at, err := strToTime(row.At)
+		if err != nil {
+			return nil, err
+		}
+		events[i] = &EpisodeEvent{
+			UserID:      row.UserID,
+			EpisodeID:   row.EpisodeID,
+			At:          at,
+			Status:      EpisodeStatus(row.Status),
+			Attempt:     row.Attempt,
+			MaxAttempts: row.MaxAttempts,
+			Detail:      row.Detail,
+		}
+	}
+	return events, nil
+}
+
+// endregion
+
+// region source links
+
+type dbSourceLink struct {
+	ID        string `db:"id"`
+	UserID    string `db:"user_id"`
+	URL       string `db:"url"`
+	CreatedAt string `db:"created_at"`
+}
+
+func (r *sqliteRepository) InsertSourceLink(ctx context.Context, link *SourceLink) error {
+	if _, err := r.dbFromContext(ctx).ExecContext(ctx, `
+		INSERT INTO source_links (id, user_id, url, created_at) VALUES (?, ?, ?, ?)`,
+		link.ID, link.UserID, link.URL, timeToStr(link.CreatedAt),
+	); err != nil {
+		return fmt.Errorf("failed to insert source link: %w", err)
+	}
+	return nil
+}
+
+// GetSourceLink returns the link of the user, or (nil, nil) if there is none.
+func (r *sqliteRepository) GetSourceLink(ctx context.Context, userID, id string) (*SourceLink, error) {
+	var row dbSourceLink
+	if err := sqlx.GetContext(ctx, r.dbFromContext(ctx), &row, `
+		SELECT * FROM source_links WHERE user_id = ? AND id = ?`, userID, id,
+	); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get source link: %w", err)
+	}
+	createdAt, err := strToTime(row.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &SourceLink{ID: row.ID, UserID: row.UserID, URL: row.URL, CreatedAt: createdAt}, nil
+}
+
+func (r *sqliteRepository) DeleteSourceLinksBefore(ctx context.Context, t time.Time) error {
+	if _, err := r.dbFromContext(ctx).ExecContext(ctx, `
+		DELETE FROM source_links WHERE created_at < ?`, timeToStr(t),
+	); err != nil {
+		return fmt.Errorf("failed to delete old source links: %w", err)
+	}
+	return nil
+}
+
+// endregion
+
 // region private
 
 func (r *sqliteRepository) toBusinessFeeds(dbFeeds []dbFeed) ([]*Feed, error) {
@@ -780,6 +975,8 @@ type dbEpisode struct {
 	Format          string         `db:"format"`
 	StorageKey      string         `db:"storage_key"`
 	CreationKey     sql.NullString `db:"creation_key"`
+	// SaveEpisode does not write the cover: SetEpisodeCover does.
+	CoverID sql.NullString `db:"cover_id"`
 }
 
 func (dbEpisode) FromBusinessModel(ep *Episode) (*dbEpisode, error) {
@@ -843,6 +1040,7 @@ func (d dbEpisode) ToBusinessModel() (*Episode, error) {
 		Format:          d.Format,
 		StorageKey:      d.StorageKey,
 		CreationKey:     d.CreationKey.String,
+		CoverID:         d.CoverID.String,
 	}, nil
 }
 

@@ -1,0 +1,42 @@
+{{/* The recent links on the home page: first the links in progress, then the finished links.
+     It polls while links are in progress. The argument is an *activityData. */}}
+{{define "activity"}}
+<div id="activity" {{if .Polling}}hx-get="/home/active" hx-trigger="every 3s" hx-target="this" hx-swap="outerHTML"{{end}}>
+  {{if or .Active .Recent}}
+  <section class="section">
+    <h3 class="section-header">Recent links</h3>
+    <ul class="card list">
+      {{range .Active}}
+      <li class="link-item">
+        <a class="row-link row-icon" href="/requests/{{.ID}}">
+          <span class="icon">⏳</span>
+          <span class="row-text">
+            <span class="row-title">{{with .Title}}{{truncate . 80}}{{else}}Link{{end}}</span>
+            {{template "bar" .Bar}}
+            <span class="row-sub">
+              {{.Ready}} of {{len .Episodes}} ready{{if .Fail}} · <span class="text-danger">{{.Fail}} failed</span>{{end}} · added {{ago .CreatedAt $.Now}}
+            </span>
+          </span>
+        </a>
+        <div class="row-extra with-icon">{{template "link-box" .SourceURL}}</div>
+      </li>
+      {{end}}
+      {{range .Recent}}
+      <li class="link-item">
+        <a class="row-link row-icon" href="/requests/{{.ID}}">
+          <span class="icon">{{if .Fail}}⚠️{{else}}✅{{end}}</span>
+          <span class="row-text">
+            <span class="row-title">{{with .Title}}{{truncate . 80}}{{else}}Link{{end}}</span>
+            <span class="row-sub">
+              {{if .Fail}}{{.Ready}} ready, {{.Fail}} failed{{else}}{{plural .Ready "episode" "episodes"}} ready{{end}} · {{ago .CreatedAt $.Now}}
+            </span>
+          </span>
+        </a>
+        <div class="row-extra with-icon">{{template "link-box" .SourceURL}}</div>
+      </li>
+      {{end}}
+    </ul>
+  </section>
+  {{end}}
+</div>
+{{end}}

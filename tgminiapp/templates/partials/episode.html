@@ -1,0 +1,77 @@
+{{/* The arguments of the episode partials are an *episodeData, except where noted. */}}
+{{define "episode-title"}}
+<header id="episode-title" class="page-header">
+  {{with .Episode.CoverPath}}<img class="cover" src="{{.}}" alt="Cover">{{end}}
+  <p class="overline">Episode #{{.Episode.ID}}</p>
+  <div class="title-row">
+    <h1>{{.Episode.Title}}</h1>
+    {{template "edit-button" "episode-rename"}}
+  </div>
+  <form id="episode-rename" class="inline-form" hidden hx-post="/episodes/{{.Episode.ID}}/title" hx-target="#episode-title" hx-swap="outerHTML">
+    <input class="input" type="text" name="title" value="{{.Episode.Title}}" required>
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+</header>
+{{end}}
+
+{{define "episode-status"}}
+<section id="episode-status" class="section" {{if .Polling}}hx-get="/episodes/{{.Episode.ID}}/status" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML"{{end}}>
+  {{if eq .Episode.Stage.Class "done"}}
+    {{with .Episode.URL}}<div class="card player"><audio controls preload="none" src="{{.}}"></audio></div>{{end}}
+  {{else}}
+  <div class="card status-card">
+    {{template "steps" .Episode.Steps}}
+    <p class="status-line">
+      <span class="pill st-{{.Episode.Stage.Class}}">{{.Episode.Stage.Label}}</span>
+      {{with .Episode.Attempt}}attempt {{.}}{{end}}
+    </p>
+    {{with .Episode.LastError}}<p class="ep-error">{{truncate . 500}}</p>{{end}}
+  </div>
+  {{end}}
+  {{if .Events}}
+  <details class="history" {{if not .Episode.Status.IsFinal}}open{{end}}>
+    <summary class="section-header">Status history</summary>
+    <ol class="card timeline">
+      {{$start := (index .Events 0).At}}
+      {{range .Events}}
+      <li>
+        <span class="time">{{elapsed (sub .At $start)}}</span>
+        <span class="dot st-{{(stage .Status).Class}}"></span>
+        <span class="row-text">
+          <span>{{eventLabel .}}</span>
+          {{with .Detail}}<span class="ep-error">{{truncate . 300}}</span>{{end}}
+        </span>
+      </li>
+      {{end}}
+    </ol>
+  </details>
+  {{end}}
+</section>
+{{end}}
+
+{{/* The argument is an *episodeFeedsData. */}}
+{{define "episode-feeds"}}
+<section id="episode-feeds" class="section">
+  <h3 class="section-header">Feeds</h3>
+  <div class="card list">
+    {{range .Feeds}}
+    <label class="row switch-row">
+      <span class="row-text">
+        <span class="row-title">{{.Title}}</span>
+        <span class="row-sub">{{template "keep-text" .}}</span>
+      </span>
+      <input class="switch" type="checkbox" name="in" value="1" {{if contains $.Episode.FeedIDs .ID}}checked{{end}}
+        hx-post="/episodes/{{$.Episode.ID}}/feeds" hx-vals='{"feed": "{{.ID}}"}' hx-target="#episode-feeds" hx-swap="outerHTML">
+    </label>
+    {{end}}
+  </div>
+  <p class="section-footer">
+    {{if .Episode.Expires}}
+      {{if .Episode.Feeds}}No feed of this episode keeps episodes.{{else}}This episode is in no feed.{{end}}
+      It will be deleted on {{date .Episode.ExpiresAt .Now}}.
+    {{else}}
+      This episode stays, because it is in a feed that keeps episodes.
+    {{end}}
+  </p>
+</section>
+{{end}}

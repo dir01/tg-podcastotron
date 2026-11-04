@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Podcast-O-Tron</title>
+  <link rel="stylesheet" href="/static/app.css?v={{.V}}">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/static/htmx.min.js?v={{.V}}" defer></script>
+  <script src="/static/app.js?v={{.V}}" defer></script>
+</head>
+<body hx-boost="true">
+  <main id="main" hx-history-elt hx-get="{{.Path}}" hx-trigger="load" hx-target="this">
+    <div class="loading"><span class="spinner"></span></div>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
