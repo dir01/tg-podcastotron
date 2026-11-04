@@ -246,6 +246,13 @@ func TestNewRequestFlow(t *testing.T) {
 	if !strings.Contains(body, `name="feed" value="1" checked`) {
 		t.Errorf("the default feed is not selected:\n%s", body)
 	}
+	// A folder has no checkbox, and two buttons select how to make the episodes.
+	if strings.Contains(body, `class="folder-check"`) || strings.Contains(body, `type="radio" name="mode"`) {
+		t.Errorf("a folder has a checkbox, or the mode is a selector:\n%s", body)
+	}
+	if !strings.Contains(body, `name="mode" value="separate"`) || !strings.Contains(body, `name="mode" value="join"`) {
+		t.Errorf("the buttons to create the episodes are missing:\n%s", body)
+	}
 
 	resp, _ = app.do(http.MethodPost, newPath, url.Values{"file": {"Book/CD 1/01.mp3"}})
 	if resp.StatusCode != http.StatusBadRequest {

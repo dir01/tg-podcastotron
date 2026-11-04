@@ -131,16 +131,29 @@
 
   // A form with data-main-button gets the Telegram main button. The text is in
   // data-main-button. data-main-button-hidden="true" hides the button, and
-  // data-main-button-disabled="true" disables it.
+  // data-main-button-disabled="true" disables it. data-secondary-button and
+  // data-secondary-button-hidden do the same for the secondary button.
+  // A button click submits the form with its [data-main-submit] or
+  // [data-secondary-submit] button, if the form has one.
+  // A client before Bot API 7.10 has no secondary button. Then a form with
+  // data-secondary-button gets the class html-buttons and shows its own
+  // buttons instead of the Telegram buttons.
   let mainButtonForm = null;
+  let pressedButton = null; // the Telegram button that submitted the form
+  const hasSecondaryButton = inTelegram && !!tg.SecondaryButton &&
+    typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast('7.10');
 
   function syncMainButton() {
     if (!inTelegram) return;
     const mb = tg.MainButton;
+    const sb = hasSecondaryButton ? tg.SecondaryButton : null;
     const form = document.querySelector('#main [data-main-button]');
-    if (!form || form.dataset.mainButtonHidden === 'true') {
+    const htmlButtons = form && form.dataset.secondaryButton && !sb;
+    if (form) form.classList.toggle('html-buttons', !!htmlButtons);
+    if (!form || htmlButtons || form.dataset.mainButtonHidden === 'true') {
       mainButtonForm = null;
       mb.hide();
+      if (sb) sb.hide();
       return;
     }
     mainButtonForm = form;
@@ -149,19 +162,38 @@
       is_active: form.dataset.mainButtonDisabled !== 'true',
       is_visible: true,
     });
+    if (!sb) return;
+    if (!form.dataset.secondaryButton || form.dataset.secondaryButtonHidden === 'true') {
+      sb.hide();
+      return;
+    }
+    // The two buttons are equally important: they have the same colors and stand side by side.
+    const colors = {};
+    if (tg.themeParams.button_color) colors.color = tg.themeParams.button_color;
+    if (tg.themeParams.button_text_color) colors.text_color = tg.themeParams.button_text_color;
+    mb.setParams(colors);
+    sb.setParams({ ...colors, text: form.dataset.secondaryButton, position: 'right', is_active: true, is_visible: true });
+  }
+
+  function submitWith(button, selector) {
+    if (!mainButtonForm || !document.body.contains(mainButtonForm)) return;
+    pressedButton = button;
+    // htmx sends the name and the value of the clicked submit button.
+    const submit = mainButtonForm.querySelector(selector);
+    if (submit) submit.click();
+    else if (mainButtonForm.requestSubmit) mainButtonForm.requestSubmit();
+    else htmx.trigger(mainButtonForm, 'submit');
   }
 
   if (inTelegram) {
-    tg.MainButton.onClick(() => {
-      if (!mainButtonForm || !document.body.contains(mainButtonForm)) return;
-      if (mainButtonForm.requestSubmit) mainButtonForm.requestSubmit();
-      else htmx.trigger(mainButtonForm, 'submit');
-    });
+    tg.MainButton.onClick(() => submitWith(tg.MainButton, '[data-main-submit]'));
+    if (hasSecondaryButton) tg.SecondaryButton.onClick(() => submitWith(tg.SecondaryButton, '[data-secondary-submit]'));
     document.addEventListener('htmx:beforeRequest', (e) => {
-      if (mainButtonForm && e.detail.elt === mainButtonForm) tg.MainButton.showProgress(false);
+      if (mainButtonForm && e.detail.elt === mainButtonForm) (pressedButton || tg.MainButton).showProgress(false);
     });
     document.addEventListener('htmx:afterRequest', (e) => {
-      if (mainButtonForm && e.detail.elt === mainButtonForm) tg.MainButton.hideProgress();
+      if (mainButtonForm && e.detail.elt === mainButtonForm) (pressedButton || tg.MainButton).hideProgress();
+      pressedButton = null;
     });
   }
 
@@ -255,7 +287,7 @@
       update();
     }
 
-    // scopeOf returns the element with the files that a button or a folder checkbox changes.
+    // scopeOf returns the element with the files that a select button changes.
     function scopeOf(el) {
       const folder = el.closest('details.tree-folder');
       return folder ? folder.querySelector(':scope > .tree-children') : tree;
@@ -286,13 +318,13 @@
       let count = 1;
       if (tree) {
         count = order.length;
-        // A folder is checked if all its files are, and indeterminate if some are.
+        // A folder shows how many of its files are selected. A folder has no
+        // checkbox: it can select files that are not audio, such as covers.
         for (const folder of tree.querySelectorAll('details.tree-folder')) {
-          const box = folder.querySelector(':scope > summary > .folder-check');
-          const inside = fileBoxes(folder);
-          const n = inside.filter((b) => b.checked).length;
-          box.checked = inside.length > 0 && n === inside.length;
-          box.indeterminate = n > 0 && n < inside.length;
+          const picked = folder.querySelector(':scope > summary > [data-picked]');
+          const n = fileBoxes(folder).filter((b) => b.checked).length;
+          picked.textContent = n + ' selected';
+          picked.hidden = n === 0;
         }
         const inputs = document.createDocumentFragment();
         let size = 0;
@@ -307,22 +339,21 @@
         form.querySelector('[data-file-inputs]').replaceChildren(inputs);
         setText('[data-selected-count]', count);
         setText('[data-selected-size]', formatBytes(size));
-        setText('[data-separate-label]', count + ' episodes');
-        const mode = form.querySelector('[data-mode-section]');
-        if (mode) mode.hidden = count < 2;
         renderOrder();
       }
 
-      const join = form.querySelector('input[name=mode][value=join]');
-      const episodes = count >= 2 && join && join.checked ? 1 : count;
-      const label = count === 0 ? 'Choose files' : episodes === 1 ? 'Create 1 episode' : 'Create ' + episodes + ' episodes';
+      // With two or more files, a second button joins them into one episode.
+      const label = count === 0 ? 'Choose files' : count === 1 ? 'Create 1 episode' : 'Create ' + count + ' episodes';
       form.dataset.mainButton = label;
       form.dataset.mainButtonDisabled = count === 0 ? 'true' : 'false';
-      const submit = form.querySelector('[data-submit-label]');
+      form.dataset.secondaryButtonHidden = count < 2 ? 'true' : 'false';
+      const submit = form.querySelector('[data-main-submit]');
       if (submit) {
         submit.textContent = label;
         submit.disabled = count === 0;
       }
+      const join = form.querySelector('[data-secondary-submit]');
+      if (join) join.hidden = count < 2;
       syncMainButton();
     }
 
@@ -334,7 +365,6 @@
     form.addEventListener('change', (e) => {
       const t = e.target;
       if (t.matches('input[data-file]')) setSelected([t], t.checked);
-      else if (t.classList.contains('folder-check')) setSelected(fileBoxes(scopeOf(t)), t.checked);
       else update();
     });
 
