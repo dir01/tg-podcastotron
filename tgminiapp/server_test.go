@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -440,5 +441,36 @@ func TestLinkFromFeedPage(t *testing.T) {
 	}
 	if !strings.Contains(body, `name="feed" value="2" checked`) || strings.Contains(body, `name="feed" value="1" checked`) {
 		t.Errorf("only feed 2 must be selected:\n%s", body)
+	}
+}
+
+func TestEpisodesPages(t *testing.T) {
+	app := newTestApp(t, &DevUser{ID: "100", Username: "admin"})
+	ctx := context.Background()
+	now := time.Now().UTC()
+	for i := 1; i <= episodesPageSize+5; i++ {
+		id := strconv.Itoa(i)
+		if _, err := app.repo.SaveEpisode(ctx, &service.Episode{
+			ID: id, UserID: "100", Title: "Episode " + id, CreatedAt: now.Add(time.Duration(i) * time.Minute), UpdatedAt: now,
+			Status: "", // an old episode without a status
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The loader of the next page must not go into the history.
+	body := app.get("/episodes", 200, `offset=50" hx-trigger="revealed" hx-target="this" hx-swap="outerHTML" hx-push-url="false"`)
+	if strings.Contains(body, "Episode 5<") {
+		t.Error("the first page has the oldest episodes")
+	}
+	app.get("/episodes?offset=50", 200, "Episode 5<")
+
+	// A negative offset is the first page, not a crash.
+	app.get("/episodes?offset=-1", 200, "Episodes</h1>", "Episode 55<")
+
+	// Old episodes without a status are ready, not in progress, and their page does not poll.
+	app.get("/episodes?show=active", 200, "No episodes here.")
+	if body := app.get("/episodes/1", 200); strings.Contains(body, `hx-trigger="every 2s"`) {
+		t.Error("the page of an old episode polls")
 	}
 }

@@ -57,9 +57,7 @@ func (s *Server) episodes(w http.ResponseWriter, r *http.Request, u *User) error
 	sortNewestFirst(episodes)
 
 	data := &episodesData{Filter: filter, Filters: episodeFilters, Totals: sumEpisodes(episodes), Now: s.now()}
-	if offset > len(episodes) {
-		offset = len(episodes)
-	}
+	offset = min(max(offset, 0), len(episodes))
 	page := episodes[offset:]
 	if len(page) > episodesPageSize {
 		page = page[:episodesPageSize]

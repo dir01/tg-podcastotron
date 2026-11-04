@@ -49,9 +49,15 @@ func (r *Request) Count(statuses ...EpisodeStatus) int {
 	return n
 }
 
-// IsFinal tells if the status does not change again.
+// IsFinal tells if the status does not change again. Old episodes can have no
+// status: they are ready, and nothing updates them.
 func (s EpisodeStatus) IsFinal() bool {
-	return s == EpisodeStatusComplete || s == EpisodeStatusFailed
+	switch s {
+	case EpisodeStatusCreated, EpisodeStatusPending, EpisodeStatusDownloading,
+		EpisodeStatusProcessing, EpisodeStatusUploading, EpisodeStatusRetrying:
+		return false
+	}
+	return true
 }
 
 // GetRequest returns the request, or nil if it has no episodes. The episodes of a

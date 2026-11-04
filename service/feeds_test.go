@@ -195,3 +195,18 @@ func TestRequestTitle(t *testing.T) {
 		t.Errorf("video title = %q, want the episode title", got)
 	}
 }
+
+func TestEpisodeStatusIsFinal(t *testing.T) {
+	for status, want := range map[service.EpisodeStatus]bool{
+		service.EpisodeStatusComplete:    true,
+		service.EpisodeStatusFailed:      true,
+		"":                               true, // an old episode: ready, and nothing updates it
+		service.EpisodeStatusCreated:     false,
+		service.EpisodeStatusDownloading: false,
+		service.EpisodeStatusRetrying:    false,
+	} {
+		if got := status.IsFinal(); got != want {
+			t.Errorf("%q.IsFinal() = %v, want %v", status, got, want)
+		}
+	}
+}
