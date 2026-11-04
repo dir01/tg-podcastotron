@@ -405,6 +405,7 @@ input[type=checkbox], input[type=radio] {
 .order-list { margin: 6px 0 0; padding: 8px var(--gap) 8px 40px !important; font-size: 13px; color: var(--sub); }
 .order-list li { padding: 2px 0; word-break: break-all; }
 .tree-meta { flex: none; font-size: 12px; color: var(--hint); }
+.tree-picked { flex: none; font-size: 12px; font-weight: 600; color: var(--link); }
 
 .radio-row, .check-row, .switch-row { cursor: pointer; }
 
