@@ -50,14 +50,52 @@ docker-compose-up:  # Run required services (from docker-compose.yml)
 SQL_MIGRATE_CONFIG ?= ./db/dbconfig.yml
 SQL_MIGRATE_ENV ?= development
 
-new-migration: # Create a new migration
-	go tool sql-migrate new -config "${SQL_MIGRATE_CONFIG}" $(shell bash -c 'read -p "Enter migration name: " name; echo $$name')
+new-migration: sql-migrate # Create a new migration
+	$(SQL_MIGRATE) new -config "${SQL_MIGRATE_CONFIG}" $(shell bash -c 'read -p "Enter migration name: " name; echo $$name')
 .PHONY: new-migration
 
-migrate: # Migrate the database to the latest version
-	sql-migrate up -config "${SQL_MIGRATE_CONFIG}" -env "${SQL_MIGRATE_ENV}"
+migrate: sql-migrate # Migrate the database to the latest version
+	$(SQL_MIGRATE) up -config "${SQL_MIGRATE_CONFIG}" -env "${SQL_MIGRATE_ENV}"
 .PHONY: migrate
 
-migrate-down: # Rollback the database one version down
-	sql-migrate down -config "${SQL_MIGRATE_CONFIG}" -env "${SQL_MIGRATE_ENV}"
+migrate-down: sql-migrate # Rollback the database one version down
+	$(SQL_MIGRATE) down -config "${SQL_MIGRATE_CONFIG}" -env "${SQL_MIGRATE_ENV}"
 .PHONY: migrate-down
+
+# region tools
+
+# LOCALBIN is where the tools go. Each tool is <name>-<version>, and <name> is a link to it.
+LOCALBIN ?= $(shell pwd)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+SQL_MIGRATE ?= $(LOCALBIN)/sql-migrate
+SQL_MIGRATE_VERSION ?= v1.8.1
+
+sql-migrate: $(SQL_MIGRATE)-$(SQL_MIGRATE_VERSION) # Install sql-migrate in ./bin, if necessary
+	$(call link-tool,$(SQL_MIGRATE),$(SQL_MIGRATE_VERSION))
+.PHONY: sql-migrate
+
+$(SQL_MIGRATE)-$(SQL_MIGRATE_VERSION): | $(LOCALBIN)
+	$(call go-install-tool,$(SQL_MIGRATE),github.com/rubenv/sql-migrate/sql-migrate,$(SQL_MIGRATE_VERSION))
+
+# go-install-tool installs a Go package as <binary>-<version>.
+# $1 - the path of the binary, $2 - the package, $3 - the version
+define go-install-tool
+@set -e; \
+package=$(2)@$(3); \
+echo "Installing $${package}"; \
+rm -f $(1); \
+GOBIN=$(dir $(1)) go install $${package}; \
+mv $(1) $(1)-$(3)
+endef
+
+# link-tool points <binary> to <binary>-<version>. It changes the link only if
+# necessary, so that a read-only image can run the tool. The link is relative,
+# so that the directory can be copied (for example into the Docker image).
+# $1 - the path of the binary, $2 - the version
+define link-tool
+@[ "$$(readlink $(1))" = "$(notdir $(1))-$(2)" ] || ln -sf $(notdir $(1))-$(2) $(1)
+endef
+
+# endregion

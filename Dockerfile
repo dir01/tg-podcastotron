@@ -17,11 +17,12 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
 ADD . .
 
 # Cache mounts keep the compiled Go build cache and module cache warm across
-# builds (and the two binaries share one layer).
+# builds (and the bot and the tools share one layer). The tools go to
+# /build/tools as <name>-<version> with a <name> link, like in ./bin locally.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/root/go/pkg/mod \
     make build && \
-    go build -o /build/bin/sql-migrate github.com/rubenv/sql-migrate/sql-migrate
+    make sql-migrate LOCALBIN=/build/tools
 
 FROM alpine:3.24 AS app
 
@@ -29,7 +30,8 @@ RUN apk add --no-cache make
 
 WORKDIR /app
 COPY --from=builder /build/bin/bot /bin/bot
-COPY --from=builder /build/bin/sql-migrate /usr/local/bin/sql-migrate
+# `make migrate` (the init container) finds sql-migrate in ./bin and does not install it.
+COPY --from=builder /build/tools/ ./bin/
 COPY --from=builder /build/Makefile ./Makefile
 COPY --from=builder /build/db/migrations ./db/migrations
 
