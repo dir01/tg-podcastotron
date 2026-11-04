@@ -15,6 +15,9 @@ func generateFeed(feed *Feed, episodes []*Episode) (io.ReadSeeker, error) {
 	}
 
 	for _, e := range episodes {
+		if !hasFile(e) {
+			continue
+		}
 		p.AddItem(&podcasts.Item{
 			Title:    fmt.Sprintf("%s (#%s)", e.Title, e.ID),
 			GUID:     e.ID,
@@ -39,4 +42,16 @@ func generateFeed(feed *Feed, episodes []*Episode) (io.ReadSeeker, error) {
 	}
 
 	return bytes.NewReader(b.Bytes()), nil // TODO: there must be a better way to do this
+}
+
+// hasFile tells if the episode has its audio file. An episode goes into its feeds
+// when it is created, but the feed file shows it only when the file is ready.
+// Old episodes can have no status, and they have files.
+func hasFile(e *Episode) bool {
+	switch e.Status {
+	case EpisodeStatusCreated, EpisodeStatusPending, EpisodeStatusDownloading, EpisodeStatusProcessing,
+		EpisodeStatusUploading, EpisodeStatusRetrying, EpisodeStatusFailed:
+		return false
+	}
+	return true
 }
