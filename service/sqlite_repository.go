@@ -442,6 +442,10 @@ func (r *sqliteRepository) GetEpisodesMap(ctx context.Context, userID string, ep
 }
 
 func (r *sqliteRepository) DeleteEpisodes(ctx context.Context, userID string, episodeIDs []string) error {
+	if len(episodeIDs) == 0 {
+		return nil
+	}
+
 	db := r.dbFromContext(ctx)
 
 	coverQuery, coverArgs, err := sqlx.In(`
