@@ -55,13 +55,13 @@
   <h3 class="section-header">Feeds</h3>
   <div class="card list">
     {{range .Feeds}}
-    <label class="row switch-row">
+    <label class="row check-row">
+      <input type="checkbox" name="in" value="1" {{if contains $.Episode.FeedIDs .ID}}checked{{end}}
+        hx-post="/episodes/{{$.Episode.ID}}/feeds" hx-vals='{"feed": "{{.ID}}"}' hx-target="#episode-feeds" hx-swap="outerHTML">
       <span class="row-text">
         <span class="row-title">{{.Title}}</span>
         <span class="row-sub">{{template "keep-text" .}}</span>
       </span>
-      <input class="switch" type="checkbox" name="in" value="1" {{if contains $.Episode.FeedIDs .ID}}checked{{end}}
-        hx-post="/episodes/{{$.Episode.ID}}/feeds" hx-vals='{"feed": "{{.ID}}"}' hx-target="#episode-feeds" hx-swap="outerHTML">
     </label>
     {{end}}
   </div>

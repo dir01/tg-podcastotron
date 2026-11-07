@@ -432,5 +432,7 @@
   htmx.onLoad((root) => {
     init(root, '[data-new-form]', initNewForm);
     init(root, '[data-selection]', initSelection);
+    // Only a script can set a checkbox to "some of the episodes are in this feed".
+    init(root, '[data-indeterminate]', (el) => { el.indeterminate = true; });
   });
 })();
