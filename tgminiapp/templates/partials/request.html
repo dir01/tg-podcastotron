@@ -53,7 +53,7 @@
 </div>
 {{end}}
 
-{{/* The feeds of all episodes of a link. A tap opens switches that change them.
+{{/* The feeds of all episodes of a link. A tap opens checkboxes that change them.
      The argument is a *requestFeedsData. */}}
 {{define "request-feeds"}}
 <section id="request-feeds" class="section">
@@ -66,16 +66,16 @@
     </summary>
     <div class="list">
       {{range .Rows}}
-      <label class="row switch-row">
+      <label class="row check-row">
+        <input type="checkbox" name="in" value="1" {{if eq .In $.Total}}checked{{end}} {{if and (gt .In 0) (lt .In $.Total)}}data-indeterminate{{end}}
+          hx-post="/requests/{{$.ID}}/feeds" hx-vals='{"feed": "{{.ID}}"}' hx-target="#request-feeds" hx-swap="outerHTML">
         <span class="row-text">
           <span class="row-title">{{.Title}}</span>
           <span class="row-sub">{{if and (gt .In 0) (lt .In $.Total)}}{{.In}} of {{$.Total}} episodes · {{end}}{{template "keep-text" .}}</span>
         </span>
-        <input class="switch" type="checkbox" name="in" value="1" {{if eq .In $.Total}}checked{{end}}
-          hx-post="/requests/{{$.ID}}/feeds" hx-vals='{"feed": "{{.ID}}"}' hx-target="#request-feeds" hx-swap="outerHTML">
       </label>
       {{end}}
-      <p class="row row-sub">The switches change the feeds of all {{plural $.Total "episode" "episodes"}} from this link.</p>
+      <p class="row row-sub">The checkboxes change the feeds of all {{plural $.Total "episode" "episodes"}} from this link.</p>
     </div>
   </details>
 </section>
