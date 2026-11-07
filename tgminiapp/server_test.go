@@ -187,7 +187,8 @@ func TestPages(t *testing.T) {
 		`data-copy="magnet:?xt=urn:btih:abc&amp;dn=The&#43;Book"`, `class="link-box-text">magnet:?xt=urn:btih:abc&amp;dn=The&#43;Book<`,
 		`data-copy="https://s3.example.com/feeds/p-100/2"`)
 	app.get("/home/active", 200, "The Book", `hx-trigger="every 3s"`)
-	app.get("/requests/req1", 200, ">Link<", "3 episodes · 4 h 30 min · 240 MB", `id="request-feeds"`, "Books (2/3)", "Chapter 1", "Chapter 2", "1<span class=\"of\"> of 3", "boom 3", "Books", `class="link-box-text">magnet:?xt=urn:btih:abc`)
+	app.get("/requests/req1", 200, ">Link<", "3 episodes · 4 h 30 min · 240 MB", `id="request-feeds"`, "Books (2/3)", "Chapter 1", "Chapter 2", "1<span class=\"of\"> of 3", "boom 3", "Books", `class="link-box-text">magnet:?xt=urn:btih:abc`,
+		"Link of the feed “Books”", `data-copy="https://s3.example.com/feeds/p-100/2"`)
 	app.get("/requests/req1/progress", 200, `hx-trigger="every 2s"`)
 	app.get("/requests/unknown", 200, "Preparing the episodes")
 	app.get("/requests/unknown/progress?wait=1000", 200, "This request has no episodes")

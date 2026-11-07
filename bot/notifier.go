@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-telegram/bot/models"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"tg-podcastotron/service"
@@ -75,7 +76,32 @@ func (ub *UndercastBot) notify(ctx context.Context, userID string, req *service.
 			return
 		}
 	}
-	ub.send(ctx, chatID, finishedMessage(req, feeds), ub.openButton("Open", path))
+	markup := ub.openButton("Open", path)
+	markup.InlineKeyboard = append(copyFeedLinkButtons(readyFeeds(req, feeds)), markup.InlineKeyboard...)
+	ub.send(ctx, chatID, finishedMessage(req, feeds), markup)
+}
+
+// maxCopyButtons is the maximum number of "copy the feed link" buttons in a message.
+const maxCopyButtons = 3
+
+// copyTextMaxLen is the maximum length of the text of a copy_text button (Telegram Bot API).
+const copyTextMaxLen = 256
+
+// copyFeedLinkButtons returns one row with a "copy the link" button for each feed.
+// A tap on the button copies the feed link, so the user can add it to a podcast app.
+func copyFeedLinkButtons(feeds []*service.Feed) [][]models.InlineKeyboardButton {
+	var rows [][]models.InlineKeyboardButton
+	for _, f := range feeds {
+		if f.URL == "" || len(f.URL) > copyTextMaxLen || len(rows) == maxCopyButtons {
+			continue
+		}
+		text := "Copy the feed link"
+		if len(feeds) > 1 {
+			text = "Copy the link: " + truncate(f.Title, 40)
+		}
+		rows = append(rows, []models.InlineKeyboardButton{{Text: text, CopyText: &models.CopyTextButton{Text: f.URL}}})
+	}
+	return rows
 }
 
 // finishedMessage is the text of the message about a finished request.
@@ -121,16 +147,25 @@ func finishedMessage(req *service.Request, feeds []*service.Feed) string {
 	return b.String()
 }
 
-// feedNames returns the names of the feeds of the complete episodes, for example "<b>A</b> and <b>B</b>".
-func feedNames(req *service.Request, feeds []*service.Feed) string {
-	var names []string
+// readyFeeds returns the feeds of the complete episodes.
+func readyFeeds(req *service.Request, feeds []*service.Feed) []*service.Feed {
+	var result []*service.Feed
 	for _, f := range feeds {
 		for _, ep := range req.Episodes {
 			if ep.Status == service.EpisodeStatusComplete && contains(ep.FeedIDs, f.ID) {
-				names = append(names, "<b>"+html.EscapeString(truncate(f.Title, 100))+"</b>")
+				result = append(result, f)
 				break
 			}
 		}
+	}
+	return result
+}
+
+// feedNames returns the names of the feeds of the complete episodes, for example "<b>A</b> and <b>B</b>".
+func feedNames(req *service.Request, feeds []*service.Feed) string {
+	var names []string
+	for _, f := range readyFeeds(req, feeds) {
+		names = append(names, "<b>"+html.EscapeString(truncate(f.Title, 100))+"</b>")
 	}
 	switch len(names) {
 	case 0:

@@ -78,5 +78,12 @@
       <p class="row row-sub">The checkboxes change the feeds of all {{plural $.Total "episode" "episodes"}} from this link.</p>
     </div>
   </details>
+  {{if .AnyIn}}
+  <ul class="card list">
+    {{range .Rows}}{{if gt .In 0}}
+    <li class="row column"><span class="row-sub">Link of the feed “{{.Title}}”</span>{{template "link-box" .URL}}</li>
+    {{end}}{{end}}
+  </ul>
+  {{end}}
 </section>
 {{end}}
