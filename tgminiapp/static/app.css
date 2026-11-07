@@ -211,7 +211,7 @@ input[type=checkbox], input[type=radio] {
 }
 .switch:checked { background: var(--st-done); }
 .switch:checked::after { transform: translateX(20px); }
-.switch.htmx-request { opacity: 0.6; }
+.switch.htmx-request, input[type=checkbox].htmx-request { opacity: 0.6; }
 
 .paste-form, .inline-form, .rename-form { display: flex; gap: 8px; align-items: center; }
 
