@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"reflect"
 	"testing"
 
 	"tg-podcastotron/service"
@@ -46,6 +47,37 @@ func TestFinishedMessage(t *testing.T) {
 		req := &service.Request{SourceURL: src, Episodes: tc.episodes}
 		if got := finishedMessage(req, feeds); got != tc.want {
 			t.Errorf("%s:\ngot  %q\nwant %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestCopyFeedLinkButtons(t *testing.T) {
+	texts := func(feeds ...*service.Feed) []string {
+		var got []string
+		for _, row := range copyFeedLinkButtons(feeds) {
+			got = append(got, row[0].Text+" = "+row[0].CopyText.Text)
+		}
+		return got
+	}
+	main := &service.Feed{Title: "Main", URL: "https://s3.example.com/feeds/u/1"}
+	books := &service.Feed{Title: "Books", URL: "https://s3.example.com/feeds/u/2"}
+	noURL := &service.Feed{Title: "No URL"}
+
+	cases := map[string]struct {
+		got, want []string
+	}{
+		"no feeds": {texts(), nil},
+		"one feed": {texts(main), []string{"Copy the feed link = https://s3.example.com/feeds/u/1"}},
+		"two feeds": {texts(main, books), []string{
+			"Copy the link: Main = https://s3.example.com/feeds/u/1",
+			"Copy the link: Books = https://s3.example.com/feeds/u/2",
+		}},
+		"feed without a URL": {texts(noURL), nil},
+		"too many feeds":     {texts(main, books, main, books)[maxCopyButtons:], []string{}},
+	}
+	for name, tc := range cases {
+		if !reflect.DeepEqual(tc.got, tc.want) {
+			t.Errorf("%s:\ngot  %q\nwant %q", name, tc.got, tc.want)
 		}
 	}
 }
