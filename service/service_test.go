@@ -369,6 +369,21 @@ func TestService(t *testing.T) {
 		}
 	})
 
+	t.Run("Delete feed with episodes when the feed has no episodes", func(t *testing.T) {
+		userID := mkUserID()
+
+		feed := must(svc.CreateFeed(ctx, userID, "empty feed to be deleted"))(t)
+
+		if err = svc.DeleteFeed(ctx, userID, feed.ID, true); err != nil {
+			t.Fatalf("error deleting empty feed with episodes: %v", err)
+		}
+
+		feeds := must(svc.ListFeeds(ctx, userID))(t)
+		if len(feeds) != 1 { // default feed is still there
+			t.Fatalf("expected 1 feed, got %d", len(feeds))
+		}
+	})
+
 	t.Run("Default feed can not be deleted", func(t *testing.T) {
 		userID := mkUserID()
 
