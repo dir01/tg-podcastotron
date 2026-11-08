@@ -188,12 +188,22 @@
   if (inTelegram) {
     tg.MainButton.onClick(() => submitWith(tg.MainButton, '[data-main-submit]'));
     if (hasSecondaryButton) tg.SecondaryButton.onClick(() => submitWith(tg.SecondaryButton, '[data-secondary-submit]'));
+    // The Telegram button keeps its progress state on the next pages, so the
+    // progress must always stop. When the response replaces the page, htmx
+    // sends afterRequest on #main (the form is no longer in the document), so
+    // find the request by its form in requestConfig, and not by e.detail.elt.
+    let progress = null; // {form, button} of the request in progress
     document.addEventListener('htmx:beforeRequest', (e) => {
-      if (mainButtonForm && e.detail.elt === mainButtonForm) (pressedButton || tg.MainButton).showProgress(false);
+      if (!mainButtonForm || e.detail.elt !== mainButtonForm) return;
+      progress = { form: mainButtonForm, button: pressedButton || tg.MainButton };
+      pressedButton = null;
+      progress.button.showProgress(false);
     });
     document.addEventListener('htmx:afterRequest', (e) => {
-      if (mainButtonForm && e.detail.elt === mainButtonForm) (pressedButton || tg.MainButton).hideProgress();
-      pressedButton = null;
+      const form = e.detail.requestConfig && e.detail.requestConfig.elt;
+      if (!progress || form !== progress.form) return;
+      progress.button.hideProgress();
+      progress = null;
     });
   }
 
